@@ -1,10 +1,19 @@
 import { MessageFlags } from 'discord.js';
 import { config } from './config.js';
 
-/** ผู้ดูแล = เจ้าของเซิร์ฟเวอร์ หรือมียศใดยศหนึ่งใน ADMIN_ROLE_IDS */
+// กำหนด User ID ของผู้ดูแลระบบที่มีสิทธิ์ขาด (2 คนตามที่กำหนด)
+const ALLOWED_ADMIN_IDS = [
+  '1573261820842741790',
+  '1459481860626190568'
+];
+
+/** ผู้ดูแล = เจ้าของเซิร์ฟเวอร์ หรืออยู่ในรายชื่อ ID ที่กำหนด */
 export function isAdmin(member) {
   if (!member) return false;
+  // อนุญาตให้ User ID ที่ระบุไว้ หรือเจ้าของเซิร์ฟเวอร์ใช้งานได้
+  if (ALLOWED_ADMIN_IDS.includes(member.id)) return true;
   if (member.guild.ownerId === member.id) return true;
+  
   return member.roles.cache.some((role) => config.adminRoleIds.has(role.id));
 }
 
@@ -19,8 +28,8 @@ export async function requireAdmin(interaction) {
 }
 
 /**
- * ตรวจว่าลงโทษคนนี้ได้ไหม คืนข้อความ error หรือ null ถ้าผ่าน
- * kind: 'warn' (ตรวจแค่ลำดับยศ) | 'timeout' | 'kick' | 'ban'
+- ตรวจว่าลงโทษคนนี้ได้ไหม คืนข้อความ error หรือ null ถ้าผ่าน
+- kind: 'warn' (ตรวจแค่ลำดับยศ) | 'timeout' | 'kick' | 'ban'
  */
 export function checkTarget(guild, invokerMember, targetMember, kind) {
   if (!targetMember) return null; // ไม่อยู่ในเซิร์ฟเวอร์แล้ว (ใช้กับแบนได้)
