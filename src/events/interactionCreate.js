@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { handleModerationButtons, handleModerationSubmit } from '../systems/moderationSystem.js';
 import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.js';
 import { activeSessions, DATA_PATH, RANK_TIERS } from './voiceStateUpdate.js';
+import { handleBotCommanderInteraction } from '../commands/botCommander.js'; // 1. นำเข้าตัวจัดการแผงคุมบอท
 
 async function replyError(interaction, text) {
   try {
@@ -23,6 +24,9 @@ export default {
   name: Events.InteractionCreate,
   async execute(interaction, client) {
     if (!isOurGuild(interaction.guild)) return;
+
+    // 🛰️ ดักจับปุ่มและเมนูของระบบศูนย์บัญชาการบอท (Bot Commander)
+    if (await handleBotCommanderInteraction(interaction)) return;
 
     // 🛡️ ดักจับปุ่มเปิด-ปิด และรีเฟรชแผงถาวรของ Bot Guard
     if (interaction.isButton() && (interaction.customId === 'toggle_bot_guard' || interaction.customId === 'refresh_bot_guard')) {
