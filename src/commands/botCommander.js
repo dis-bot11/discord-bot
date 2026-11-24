@@ -14,7 +14,55 @@ import { requireAdmin } from '../permissions.js';
 
 export const BOT_PANEL_PATH = path.resolve('bot-commander-panel.json');
 
-// ฟังก์ชันสแกนบอททั้งหมดและสร้าง Embed แผงบัญชาการ (พร้อมระบบ Debug)
+// รายชื่อบอทมาตรฐานที่ไว้ใจได้ (ถ้าถือสิทธิ์แอดมินจะแสดงแค่ป้าย ADMIN ไม่ขึ้นเตือนอันตราย)
+// พี่สามารถเพิ่มหรือลบชื่อบอทในนี้ได้ตามต้องการ (เช็กจากชื่อบอทแบบไม่สนตัวพิมพ์เล็ก-ใหญ่)
+const TRUSTED_BOT_KEYWORDS = [
+  'activityrank',
+  'chompu',
+  'dyno',
+  'emoji.gg',
+  'invite tracker',
+  'jockie music',
+  'koya',
+  'lilia',
+  'mahiru',
+  'pancake',
+  'probot',
+  'rythm',
+  'security',
+  'serverstats',
+  'slashbot',
+  'statbot',
+  'stickybot',
+  'unbelievaboat',
+  'wick',
+  'zira',
+];
+
+// ฟังก์ชันเช็กว่าบอทสุ่มเสี่ยงหรือไม่
+function checkBotRisk(bot, clientUserId) {
+  // ถ้าเป็นตัวบอทผู้คุมกฎเอง ปลอดภัย 100%
+  if (bot.id === clientUserId) return { isRisky: false, isAdmin: true };
+
+  const isAdmin = bot.permissions.has(PermissionFlagsBits.Administrator);
+  const hasHighPerms =
+    isAdmin ||
+    bot.permissions.has(PermissionFlagsBits.ManageGuild) ||
+    bot.permissions.has(PermissionFlagsBits.ManageChannels) ||
+    bot.permissions.has(PermissionFlagsBits.ManageRoles) ||
+    bot.permissions.has(PermissionFlagsBits.BanMembers);
+
+  // เช็กว่าชื่อบอทอยู่ในกลุ่มที่ไว้ใจได้ไหม
+  const botNameLower = bot.user.username.toLowerCase();
+  const isTrusted = TRUSTED_BOT_KEYWORDS.some((keyword) => botNameLower.includes(keyword));
+
+  // ถ้าถือสิทธิ์สูง แต่ไม่อยู่ในลิสต์บอทที่ไว้ใจ = สุ่มเสี่ยง อันตราย!
+  const isRisky = hasHighPerms && !isTrusted;
+
+  return { isRisky, isAdmin };
+}
+
+// ฟังก์ชันสแกนบอททั้งหมดและสร้าง Embed แผงบัญชาการ
 export async function generateBotCommanderEmbed(guild) {
   const members = guild.members.cache;
   const bots = members.filter((m) => m.user.bot);
@@ -29,10 +77,8 @@ export async function generateBotCommanderEmbed(guild) {
 
   for (const bot of sortedBots) {
     const status = bot.presence?.status;
-    // บังคับตีเป็นออนไลน์ (🟢) ยกเว้นแต่สถานะจะเป็น offline ชัดเจนจริงๆ
     const isOnline = !status || status !== 'offline';
 
-    // พิมพ์ดีบักดูสถานะดิบใน Console ของ Render
     console.log(`[DEBUG] บอท: ${bot.user.tag} | สถานะดิบ: ${status || 'undefined (ถือว่าออนไลน์)'} | ผลลัพธ์: ${isOnline ? '🟢 ออนไลน์' : '⚫ ออฟไลน์'}`);
 
     if (isOnline) {
@@ -42,10 +88,16 @@ export async function generateBotCommanderEmbed(guild) {
     }
 
     const statusIcon = isOnline ? '🟢' : '⚫';
-    
-    // กรองป้าย ADMIN ให้แสดงเฉพาะตัวที่มีสิทธิ์ Administrator จริงๆ
-    const isAdmin = bot.permissions.has(PermissionFlagsBits.Administrator);
-    const badge = isAdmin ? ' `⚠️ ADMIN`' : '';
+    const { isRisky, isAdmin } = checkBotRisk(bot, guild.client.user.id);
+
+    // จัดการป้ายกำกับท้ายชื่อตามเงื่อนไขใหม่
+    let badge = '';
+    if (isRisky) {
+      badge = ' `⚠️ อันตราย สุ่มเสี่ยง`';
+    } else if (isAdmin) {
+      badge = ' `ADMIN`';
+    }
+
     const isSelf = bot.id === guild.client.user.id ? ' *(ผู้บัญชาการ)*' : '';
 
     botLines.push(`${statusIcon} **${bot.user.tag}**${isSelf}${badge}`);
@@ -116,14 +168,17 @@ export async function handleBotCommanderInteraction(interaction) {
       if (bot.permissions.has(PermissionFlagsBits.ManageRoles)) dangers.push('สร้าง/ลบยศ');
       if (bot.permissions.has(PermissionFlagsBits.BanMembers)) dangers.push('แบนสมาชิก');
 
+      const { isRisky } = checkBotRisk(bot, guild.client.user.id);
+
       if (dangers.length > 0) {
-        reportLines.push(`🚨 **${bot.user.tag}**\n└ สิทธิ์: \`${dangers.join(', ')}\``);
+        const prefix = isRisky ? '⚠️ **[สุ่มเสี่ยง]**' : 'ℹ️ **[บอททั่วไป]**';
+        reportLines.push(`${prefix} **${bot.user.tag}**\n└ สิทธิ์: \`${dangers.join(', ')}\``);
       }
     }
 
     const auditEmbed = new EmbedBuilder()
       .setColor('#FF4500')
-      .setTitle('🛡️ รายงานตรวจสอบสิทธิ์บอท (เฉพาะตัวที่มีสิทธิ์สูง)')
+      .setTitle('🛡️ รายงานตรวจสอบสิทธิ์บอทเชิงลึก')
       .setDescription(reportLines.length > 0 ? reportLines.join('\n\n') : '✅ ไม่มีบอทตัวอื่นถือสิทธิ์อันตราย')
       .setFooter({ text: 'ข้อความนี้เห็นเฉพาะแอดมินที่กดตรวจสอบเท่านั้น' });
 
