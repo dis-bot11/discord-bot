@@ -1,13 +1,26 @@
+import http from 'node:http';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Client, GatewayIntentBits, Partials, Events, AuditLogEvent } from 'discord.js';
+import { joinVoiceChannel, VoiceConnectionStatus, entersState } from '@discordjs/voice';
 import { config } from './config.js';
 import { refreshChart } from './chart.js';
 import { commands } from './commands/index.js';
 import { handleBotJoinGuard, monitorBotActions } from './systems/antiNukeSystem.js';
 import { BOARD_CONFIG_PATH, generateLeaderboardEmbed } from './commands/setupLeaderboard.js';
+
+// เปิดพอร์ต HTTP ให้ Render ตรวจจับสถานะ Live และรับสัญญาณปลุกจาก UptimeRobot
+const port = process.env.PORT || 3000;
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Rasia Bot is online!');
+  })
+  .listen(port, '0.0.0.0', () => {
+    console.log(`🌐 HTTP Server listening on port ${port}`);
+  });
 
 const client = new Client({
   intents: [
@@ -20,6 +33,43 @@ const client = new Client({
   ],
   partials: [Partials.Message, Partials.GuildMember],
 });
+
+// 🔊 ฟังก์ชันสั่งให้บอทเข้าห้องเสียงค้างไว้ 24 ชม. และดึงกลับอัตโนมัติหากหลุด
+async function connectToVoiceChannel(c) {
+  const TARGET_VOICE_CHANNEL_ID = '1459494663718174858';
+
+  try {
+    const channel = await c.channels.fetch(TARGET_VOICE_CHANNEL_ID);
+    if (!channel || !channel.isVoiceBased()) {
+      console.warn(`❌ ไม่พบห้องเสียงไอดี ${TARGET_VOICE_CHANNEL_ID} หรือไอดีไม่ใช่ห้องเสียง`);
+      return;
+    }
+
+    const connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: channel.guild.id,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+      selfDeaf: true, // ปิดหูฟังบอท
+      selfMute: true, // ปิดไมค์บอท
+    });
+
+    connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      try {
+        await Promise.race([
+          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        connection.destroy();
+        setTimeout(() => connectToVoiceChannel(c), 5_000); // รอ 5 วินาทีแล้วเชื่อมต่อใหม่
+      }
+    });
+
+    console.log(`🔊 บอทเข้าห้องเสียง #${channel.name} ค้างไว้เรียบร้อยแล้ว!`);
+  } catch (error) {
+    console.error('❌ เกิดข้อผิดพลาดในการเข้าห้องเสียง:', error.message);
+  }
+}
 
 // โหลดทุกไฟล์ใน src/events อัตโนมัติ
 const eventsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'events');
@@ -53,6 +103,9 @@ client.on(Events.GuildRoleDelete, async (role) => {
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`✅ ออนไลน์แล้วในชื่อ ${c.user.tag} (แฟม ${config.familyName} [${config.familyTag}])`);
+
+  // สั่งให้บอทเข้าห้องเสียงทันทีที่ออนไลน์
+  await connectToVoiceChannel(c);
 
   let guild;
   try {
