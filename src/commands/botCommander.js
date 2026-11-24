@@ -14,9 +14,8 @@ import { requireAdmin } from '../permissions.js';
 
 export const BOT_PANEL_PATH = path.resolve('bot-commander-panel.json');
 
-// ฟังก์ชันสแกนบอททั้งหมดและสร้าง Embed แผงบัญชาการ (แบบดึงจากแคชความเร็วสูง)
+// ฟังก์ชันสแกนบอททั้งหมดและสร้าง Embed แผงบัญชาการ (พร้อมระบบ Debug)
 export async function generateBotCommanderEmbed(guild) {
-  // ใช้ cache ที่โหลดไว้แล้วตอนบอทเปิด เพื่อความเร็ว ไม่ให้เกิดอาการ Time out
   const members = guild.members.cache;
   const bots = members.filter((m) => m.user.bot);
 
@@ -24,31 +23,35 @@ export async function generateBotCommanderEmbed(guild) {
   let offlineCount = 0;
   const botLines = [];
 
-  // เรียงลำดับชื่อบอท
   const sortedBots = [...bots.values()].sort((a, b) => a.user.username.localeCompare(b.user.username));
 
+  console.log(`\n--- [DEBUG BOT COMMANDER] เริ่มสแกนบอททั้งหมด ${bots.size} ตัวในเซิร์ฟเวอร์ ---`);
+
   for (const bot of sortedBots) {
-    // เช็กสถานะจาก presence หรือถ้าไม่มี ให้ดูจากกิจกรรม/บอทออนไลน์ทั่วไป
     const status = bot.presence?.status;
-    // ถือว่าออนไลน์ถ้าสถานะไม่ใช่ offline หรือถ้าบอทออนไลน์อยู่แต่แคชยังไม่มา ให้มองเป็นออนไลน์เลี่ยงการขึ้นจุดดำทั้งหมด
-    const isOnline = status && status !== 'offline';
-    
-    // ถ้าบอทเปิดอยู่หรือบอทตัวเอง ให้ตีเป็นออนไลน์ไว้ก่อนเพื่อให้เรดาร์ขยับ
-    if (isOnline || bot.id === guild.client.user.id) {
+    // บังคับตีเป็นออนไลน์ (🟢) ยกเว้นแต่สถานะจะเป็น offline ชัดเจนจริงๆ
+    const isOnline = !status || status !== 'offline';
+
+    // พิมพ์ดีบักดูสถานะดิบใน Console ของ Render
+    console.log(`[DEBUG] บอท: ${bot.user.tag} | สถานะดิบ: ${status || 'undefined (ถือว่าออนไลน์)'} | ผลลัพธ์: ${isOnline ? '🟢 ออนไลน์' : '⚫ ออฟไลน์'}`);
+
+    if (isOnline) {
       onlineCount++;
     } else {
       offlineCount++;
     }
 
-    const statusIcon = isOnline || bot.id === guild.client.user.id ? '🟢' : '⚫';
+    const statusIcon = isOnline ? '🟢' : '⚫';
     
-    // เช็กเฉพาะสิทธิ์ Administrator แท้ๆ หรือ Manage Server ถึงจะเตือน (กรองไม่ให้ขึ้นเตือนทุกตัว)
+    // กรองป้าย ADMIN ให้แสดงเฉพาะตัวที่มีสิทธิ์ Administrator จริงๆ
     const isAdmin = bot.permissions.has(PermissionFlagsBits.Administrator);
     const badge = isAdmin ? ' `⚠️ ADMIN`' : '';
     const isSelf = bot.id === guild.client.user.id ? ' *(ผู้บัญชาการ)*' : '';
 
     botLines.push(`${statusIcon} **${bot.user.tag}**${isSelf}${badge}`);
   }
+
+  console.log(`--- [DEBUG BOT COMMANDER] สรุป: ออนไลน์ ${onlineCount} | ออฟไลน์ ${offlineCount} ---\n`);
 
   return new EmbedBuilder()
     .setColor('#8B0000')
@@ -91,7 +94,7 @@ export async function handleBotCommanderInteraction(interaction) {
 
   const guild = interaction.guild;
 
-  // 1. ปุ่มรีเฟรชสถานะทันที (ใช้ deferUpdate ป้องกันขึ้นแถบแดง Time out)
+  // 1. ปุ่มรีเฟรชสถานะทันที
   if (interaction.isButton() && interaction.customId === 'botcmd_refresh') {
     await interaction.deferUpdate();
     const embed = await generateBotCommanderEmbed(guild);
@@ -184,7 +187,6 @@ export async function handleBotCommanderInteraction(interaction) {
       components: [],
     });
 
-    // อัปเดตแผงหลักทันที
     if (fs.existsSync(BOT_PANEL_PATH)) {
       const { channelId, messageId } = JSON.parse(fs.readFileSync(BOT_PANEL_PATH, 'utf8'));
       const panelChannel = await guild.channels.fetch(channelId).catch(() => null);
