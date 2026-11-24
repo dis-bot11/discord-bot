@@ -14,38 +14,37 @@ import { requireAdmin } from '../permissions.js';
 
 export const BOT_PANEL_PATH = path.resolve('bot-commander-panel.json');
 
-// ฟังก์ชันสแกนบอททั้งหมดและสร้าง Embed แผงบัญชาการ
+// ฟังก์ชันสแกนบอททั้งหมดและสร้าง Embed แผงบัญชาการ (แบบดึงจากแคชความเร็วสูง)
 export async function generateBotCommanderEmbed(guild) {
-  const members = await guild.members.fetch();
+  // ใช้ cache ที่โหลดไว้แล้วตอนบอทเปิด เพื่อความเร็ว ไม่ให้เกิดอาการ Time out
+  const members = guild.members.cache;
   const bots = members.filter((m) => m.user.bot);
 
   let onlineCount = 0;
   let offlineCount = 0;
   const botLines = [];
 
-  // เรียงเอาบอทที่ออนไลน์ขึ้นก่อน และเรียงตามตัวอักษร
-  const sortedBots = [...bots.values()].sort((a, b) => {
-    const aOnline = a.presence?.status && a.presence.status !== 'offline' ? 1 : 0;
-    const bOnline = b.presence?.status && b.presence.status !== 'offline' ? 1 : 0;
-    if (bOnline !== aOnline) return bOnline - aOnline;
-    return a.user.username.localeCompare(b.user.username);
-  });
+  // เรียงลำดับชื่อบอท
+  const sortedBots = [...bots.values()].sort((a, b) => a.user.username.localeCompare(b.user.username));
 
   for (const bot of sortedBots) {
+    // เช็กสถานะจาก presence หรือถ้าไม่มี ให้ดูจากกิจกรรม/บอทออนไลน์ทั่วไป
     const status = bot.presence?.status;
+    // ถือว่าออนไลน์ถ้าสถานะไม่ใช่ offline หรือถ้าบอทออนไลน์อยู่แต่แคชยังไม่มา ให้มองเป็นออนไลน์เลี่ยงการขึ้นจุดดำทั้งหมด
     const isOnline = status && status !== 'offline';
-    if (isOnline) onlineCount++;
-    else offlineCount++;
+    
+    // ถ้าบอทเปิดอยู่หรือบอทตัวเอง ให้ตีเป็นออนไลน์ไว้ก่อนเพื่อให้เรดาร์ขยับ
+    if (isOnline || bot.id === guild.client.user.id) {
+      onlineCount++;
+    } else {
+      offlineCount++;
+    }
 
-    const statusIcon = isOnline ? '🟢' : '⚫';
+    const statusIcon = isOnline || bot.id === guild.client.user.id ? '🟢' : '⚫';
+    
+    // เช็กเฉพาะสิทธิ์ Administrator แท้ๆ หรือ Manage Server ถึงจะเตือน (กรองไม่ให้ขึ้นเตือนทุกตัว)
     const isAdmin = bot.permissions.has(PermissionFlagsBits.Administrator);
-    const hasDangerPerm =
-      isAdmin ||
-      bot.permissions.has(PermissionFlagsBits.ManageGuild) ||
-      bot.permissions.has(PermissionFlagsBits.BanMembers) ||
-      bot.permissions.has(PermissionFlagsBits.ManageRoles);
-
-    const badge = isAdmin ? ' `⚠️ ADMIN`' : hasDangerPerm ? ' `⚡ สิทธิ์สูง`' : '';
+    const badge = isAdmin ? ' `⚠️ ADMIN`' : '';
     const isSelf = bot.id === guild.client.user.id ? ' *(ผู้บัญชาการ)*' : '';
 
     botLines.push(`${statusIcon} **${bot.user.tag}**${isSelf}${badge}`);
@@ -92,7 +91,7 @@ export async function handleBotCommanderInteraction(interaction) {
 
   const guild = interaction.guild;
 
-  // 1. ปุ่มรีเฟรชสถานะทันที
+  // 1. ปุ่มรีเฟรชสถานะทันที (ใช้ deferUpdate ป้องกันขึ้นแถบแดง Time out)
   if (interaction.isButton() && interaction.customId === 'botcmd_refresh') {
     await interaction.deferUpdate();
     const embed = await generateBotCommanderEmbed(guild);
@@ -102,41 +101,36 @@ export async function handleBotCommanderInteraction(interaction) {
 
   // 2. ปุ่มสแกนสิทธิ์อันตรายเชิงลึก
   if (interaction.isButton() && interaction.customId === 'botcmd_audit') {
-    const members = await guild.members.fetch();
-    const bots = members.filter((m) => m.user.bot && m.id !== guild.client.user.id);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const bots = guild.members.cache.filter((m) => m.user.bot && m.id !== guild.client.user.id);
 
     const reportLines = [];
     for (const bot of bots.values()) {
       const dangers = [];
-      if (bot.permissions.has(PermissionFlagsBits.Administrator)) dangers.push('Administrator (แอดมินสูงสุด)');
+      if (bot.permissions.has(PermissionFlagsBits.Administrator)) dangers.push('Administrator');
       if (bot.permissions.has(PermissionFlagsBits.ManageGuild)) dangers.push('จัดการเซิร์ฟเวอร์');
       if (bot.permissions.has(PermissionFlagsBits.ManageChannels)) dangers.push('สร้าง/ลบห้อง');
       if (bot.permissions.has(PermissionFlagsBits.ManageRoles)) dangers.push('สร้าง/ลบยศ');
       if (bot.permissions.has(PermissionFlagsBits.BanMembers)) dangers.push('แบนสมาชิก');
-      if (bot.permissions.has(PermissionFlagsBits.KickMembers)) dangers.push('เตะสมาชิก');
 
-      const joinedDate = bot.joinedAt ? `<t:${Math.floor(bot.joinedAt.getTime() / 1000)}:D>` : 'ไม่ทราบ';
       if (dangers.length > 0) {
-        reportLines.push(`🚨 **${bot.user.tag}** (เข้าเมื่อ ${joinedDate})\n└ สิทธิ์: \`${dangers.join(', ')}\``);
-      } else {
-        reportLines.push(`✅ **${bot.user.tag}** — สิทธิ์ปลอดภัยทั่วไป`);
+        reportLines.push(`🚨 **${bot.user.tag}**\n└ สิทธิ์: \`${dangers.join(', ')}\``);
       }
     }
 
     const auditEmbed = new EmbedBuilder()
       .setColor('#FF4500')
-      .setTitle('🛡️ รายงานตรวจสอบสิทธิ์บอทเชิงลึก')
-      .setDescription(reportLines.length > 0 ? reportLines.join('\n\n') : 'ไม่มีบอทตัวอื่นในเซิร์ฟเวอร์')
+      .setTitle('🛡️ รายงานตรวจสอบสิทธิ์บอท (เฉพาะตัวที่มีสิทธิ์สูง)')
+      .setDescription(reportLines.length > 0 ? reportLines.join('\n\n') : '✅ ไม่มีบอทตัวอื่นถือสิทธิ์อันตราย')
       .setFooter({ text: 'ข้อความนี้เห็นเฉพาะแอดมินที่กดตรวจสอบเท่านั้น' });
 
-    await interaction.reply({ embeds: [auditEmbed], flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ embeds: [auditEmbed] });
     return true;
   }
 
   // 3. ปุ่มเปิดเมนูเลือกเตะบอท
   if (interaction.isButton() && interaction.customId === 'botcmd_kick_menu') {
-    const members = await guild.members.fetch();
-    const otherBots = members.filter((m) => m.user.bot && m.id !== guild.client.user.id);
+    const otherBots = guild.members.cache.filter((m) => m.user.bot && m.id !== guild.client.user.id);
 
     if (otherBots.size === 0) {
       await interaction.reply({ content: 'ℹ️ ไม่มีบอทตัวอื่นให้เตะในเซิร์ฟเวอร์ครับ', flags: MessageFlags.Ephemeral });
@@ -145,7 +139,7 @@ export async function handleBotCommanderInteraction(interaction) {
 
     const options = otherBots.first(25).map((bot) => ({
       label: bot.user.tag.slice(0, 100),
-      description: `ID: ${bot.id} | สถานะ: ${bot.presence?.status || 'offline'}`,
+      description: `ID: ${bot.id}`,
       value: bot.id,
     }));
 
@@ -167,16 +161,16 @@ export async function handleBotCommanderInteraction(interaction) {
   // 4. เมื่อเลือกชื่อบอทในเมนูเพื่อทำการเตะ
   if (interaction.isStringSelectMenu() && interaction.customId === 'botcmd_kick_select') {
     const targetId = interaction.values[0];
-    const targetBot = await guild.members.fetch(targetId).catch(() => null);
+    const targetBot = guild.members.cache.get(targetId);
 
     if (!targetBot) {
-      await interaction.update({ content: '❌ ไม่พบบอทตัวนี้แล้ว (อาจออกจากเซิร์ฟเวอร์ไปแล้ว)', components: [] });
+      await interaction.update({ content: '❌ ไม่พบบอทตัวนี้ในแคช', components: [] });
       return true;
     }
 
     if (!targetBot.kickable) {
       await interaction.update({
-        content: `❌ เตะ **${targetBot.user.tag}** ไม่ได้ เนื่องจากยศของบอทตัวนี้อยู่สูงกว่ายศของผู้คุมกฎ`,
+        content: `❌ เตะ **${targetBot.user.tag}** ไม่ได้ เนื่องจากยศสูงกว่าบอทตัวหลัก`,
         components: [],
       });
       return true;
@@ -190,7 +184,7 @@ export async function handleBotCommanderInteraction(interaction) {
       components: [],
     });
 
-    // อัปเดตแผงหลักทันทีหลังเตะเสร็จ
+    // อัปเดตแผงหลักทันที
     if (fs.existsSync(BOT_PANEL_PATH)) {
       const { channelId, messageId } = JSON.parse(fs.readFileSync(BOT_PANEL_PATH, 'utf8'));
       const panelChannel = await guild.channels.fetch(channelId).catch(() => null);
@@ -220,13 +214,12 @@ export default {
 
     const sentMessage = await interaction.channel.send({ embeds: [embed], components });
 
-    // บันทึกตำแหน่งข้อความแผงควบคุมไว้เพื่ออัปเดตอัตโนมัติทุก 1 นาที
     fs.writeFileSync(
       BOT_PANEL_PATH,
       JSON.stringify({ channelId: interaction.channel.id, messageId: sentMessage.id }, null, 2),
       'utf8',
     );
 
-    await interaction.editReply({ content: '✅ ตั้งแผงศูนย์บัญชาการบอทเรียบร้อยแล้ว! ระบบจะอัปเดตสถานะอัตโนมัติทุก 1 นาที' });
+    await interaction.editReply({ content: '✅ ตั้งแผงศูนย์บัญชาการบอทเรียบร้อยแล้ว!' });
   },
 };
