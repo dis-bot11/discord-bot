@@ -16,8 +16,9 @@ export default {
 
     const embed = new EmbedBuilder()
       .setColor(COLORS.info)
-      .setTitle('🌸 ปลดล็อกห้องทั้งหมด - สุภาพสตรี')
+      .setTitle('🌸 ปลดล็อกห้องทั้งหมด - ราเซีย')
       .setDescription(`กดปุ่มด้านล่างเพื่อรับยศ **${role.name}** และเปิดมองเห็นห้องทั้งหมดในแฟมค่ะ!`)
+      .setImage('https://cdn.discordapp.com/attachments/1573529871672418415/1573531151115751454/13F568BE-ED28-42A0-A17B-78BAF8EB91E6.jpg') // รูปธีม Rasia
       .setFooter({ text: `Role ID: ${role.id}` });
 
     const row = new ActionRowBuilder().addComponents(
