@@ -3,23 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COLORS } from '../logger.js';
-import { activeSessions, DATA_PATH } from '../events/voiceStateUpdate.js';
+import { activeSessions } from '../events/voiceStateUpdate.js';
+import { getVoiceTimes } from '../utils/supabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const BOARD_CONFIG_PATH = path.join(__dirname, '../data/leaderboardConfig.json');
 
-// ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาในไฟล์ + เวลาสดที่กำลังออนอยู่ตอนนี้)
-export function generateLeaderboardEmbed() {
-  let data = {};
-  if (fs.existsSync(DATA_PATH)) {
-    try {
-      data = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-    } catch {
-      data = {};
-    }
-  }
+// ☁️ ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาจาก Supabase + เวลาสดที่กำลังออนอยู่ตอนนี้)
+export async function generateLeaderboardEmbed() {
+  const data = await getVoiceTimes();
 
-  // ⏱️ นำเวลาในไฟล์ JSON มาบวกกับเวลาสดของคนที่กำลังนั่งอยู่ในห้องตอนนี้
+  // ⏱️ นำเวลาใน Supabase มาบวกกับเวลาสดของคนที่กำลังนั่งอยู่ในห้องตอนนี้
   const combined = { ...data };
   const now = Date.now();
   for (const [userId, joinedAt] of activeSessions.entries()) {
@@ -58,7 +52,8 @@ export default {
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
-    const message = await interaction.channel.send({ embeds: [generateLeaderboardEmbed()] });
+    const embed = await generateLeaderboardEmbed();
+    const message = await interaction.channel.send({ embeds: [embed] });
 
     // บันทึกข้อมูลห้องและข้อความลงไฟล์ Config เผื่อบอทรีสตาร์ท
     const dir = path.dirname(BOARD_CONFIG_PATH);

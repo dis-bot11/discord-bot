@@ -130,7 +130,7 @@ client.once(Events.ClientReady, async (c) => {
 
   await refreshChart(c);
 
-  // ⏱️ ระบบตั้งเวลาอัปเดตบอร์ดออนเสียงอัตโนมัติทุกๆ 1 นาที (ดึงเวลาสด + ป้องกันเวลาหาย)
+  // ⏱️ ระบบตั้งเวลาอัปเดตบอร์ดออนเสียงอัตโนมัติทุกๆ 1 นาที (ดึงเวลาสดจาก Supabase + ป้องกันเวลาหาย)
   setInterval(async () => {
     try {
       if (!fs.existsSync(BOARD_CONFIG_PATH)) return;
@@ -142,7 +142,8 @@ client.once(Events.ClientReady, async (c) => {
       const message = await channel.messages.fetch(messageId).catch(() => null);
       if (!message) return;
 
-      await message.edit({ embeds: [generateLeaderboardEmbed()] });
+      const embed = await generateLeaderboardEmbed();
+      await message.edit({ embeds: [embed] });
     } catch (err) {
       // จัดการกรณีข้อความถูกลบหรือห้องไม่พบ
     }

@@ -1,7 +1,4 @@
 import { AuditLogEvent, EmbedBuilder, Events } from 'discord.js';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import {
   COLORS,
@@ -12,9 +9,8 @@ import {
   sendLog,
   when,
 } from '../logger.js';
+import { supabase, addVoiceMinutes } from '../utils/supabase.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_PATH = path.join(__dirname, '../data/voiceTime.json');
 export const activeSessions = new Map();
 
 // ⚙️ ใส่เลข Role ID ของแต่ละยศตรงนี้ครับ
@@ -25,21 +21,6 @@ export const RANK_TIERS = [
   { hours: 500, roleId: '1573553344738234498' },
 ];
 
-function loadVoiceData() {
-  if (!fs.existsSync(DATA_PATH)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function saveVoiceData(data) {
-  const dir = path.dirname(DATA_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
-}
-
 async function recordAndCheckVoiceTime(member, userId) {
   const joinedAt = activeSessions.get(userId);
   if (!joinedAt) return;
@@ -49,11 +30,19 @@ async function recordAndCheckVoiceTime(member, userId) {
   const durationMinutes = Math.floor((Date.now() - joinedAt) / 60000);
   if (durationMinutes <= 0) return;
 
-  const data = loadVoiceData();
-  data[userId] = (data[userId] || 0) + durationMinutes;
-  saveVoiceData(data);
+  // ☁️ บันทึกเวลาเพิ่มลง Supabase
+  await addVoiceMinutes(userId, durationMinutes);
 
-  const totalHours = Math.floor(data[userId] / 60);
+  // ดึงเวลาสะสมล่าสุดของ User คนนี้จาก Supabase มาเช็คยศ
+  const { data, error } = await supabase
+    .from('voice_times')
+    .select('minutes')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !data) return;
+
+  const totalHours = Math.floor(data.minutes / 60);
 
   for (const tier of RANK_TIERS) {
     if (totalHours >= tier.hours && tier.roleId && !tier.roleId.includes('ใส่_ROLE_ID')) {
@@ -195,7 +184,7 @@ export default {
               { name: 'เวลา', value: when() },
             )
             .setFooter({ text: `ID: ${member.id}` }),
-        );
+      );
       }
       return;
     }

@@ -1,12 +1,6 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { COLORS } from '../logger.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// กำหนดพาร์ธให้ชี้ตรงไปที่ src/data/voiceTime.json แน่นอน
-const DATA_PATH = path.join(__dirname, '../data/voiceTime.json');
+import { getVoiceTimes } from '../utils/supabase.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -21,14 +15,8 @@ export default {
 
     const targetUser = interaction.options.getUser('target') || interaction.user;
     
-    let data = {};
-    if (fs.existsSync(DATA_PATH)) {
-      try {
-        data = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-      } catch {
-        data = {};
-      }
-    }
+    // ☁️ ดึงข้อมูลเวลาทั้งหมดจาก Supabase
+    const data = await getVoiceTimes();
 
     const userMinutes = data[targetUser.id] || 0;
     const totalHours = (userMinutes / 60).toFixed(1);
