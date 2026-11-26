@@ -25,6 +25,7 @@ async function recordAndCheckVoiceTime(member, userId) {
   const joinedAt = activeSessions.get(userId);
   if (!joinedAt) return;
 
+  // ลบออกจาก Memory ทันทีเพื่อป้องกันการบันทึกซ้ำซ้อน
   activeSessions.delete(userId);
 
   const durationMinutes = Math.floor((Date.now() - joinedAt) / 60000);
@@ -87,18 +88,20 @@ export default {
     const afkChannelId = guild.afkChannelId;
     const userId = member.id;
 
-    // ⏱️ [ระบบจับเวลา] จัดการบันทึกและเริ่มนับเวลาใหม่ให้ครอบคลุมทุกกรณี
-    if (!oldChannel && newChannel && newChannel !== afkChannelId) {
-      // เคสที่ 1: เข้าห้องครั้งแรก
+    // ⏱️ [ระบบจับเวลา] จัดการสถานะห้องเสียงแบบละเอียดและแม่นยำที่สุด
+    const isOldAfk = oldChannel && oldChannel === afkChannelId;
+    const isNewAfk = newChannel && newChannel === afkChannelId;
+
+    // 1. เข้าห้องปกติครั้งแรก (จากไม่มีห้อง หรือย้ายออกจากห้อง AFK มาห้องปกติ)
+    if ((!oldChannel && newChannel && !isNewAfk) || (isOldAfk && newChannel && !isNewAfk)) {
       activeSessions.set(userId, Date.now());
-    } else if (oldChannel && (!newChannel || newChannel === afkChannelId)) {
-      // เคสที่ 2: ออกจากห้อง หรือย้ายเข้าห้อง AFK -> บันทึกเวลาสะสม
+    }
+    // 2. ออกจากห้องปกติ หรือย้ายเข้าห้อง AFK -> บันทึกเวลาสะสมแล้วหยุดนับ
+    else if ((oldChannel && !isOldAfk && !newChannel) || (oldChannel && !isOldAfk && isNewAfk)) {
       await recordAndCheckVoiceTime(member, userId);
-    } else if (oldChannel === afkChannelId && newChannel && newChannel !== afkChannelId) {
-      // เคสที่ 3: ออกจากห้อง AFK มาเข้าห้องปกติ -> เริ่มจับเวลาใหม่
-      activeSessions.set(userId, Date.now());
-    } else if (oldChannel && newChannel && oldChannel !== newChannel) {
-      // เคสที่ 4: ย้ายจากห้องปกติไปยังห้องปกติอื่น -> บันทึกเวลาห้องเดิม แล้วเริ่มนับห้องใหม่ต่อทันที
+    }
+    // 3. ย้ายห้องปกติไปยังห้องปกติอื่น (Switch Channel ระหว่างห้องใช้งานจริง)
+    else if (oldChannel && newChannel && !isOldAfk && !isNewAfk && oldChannel !== newChannel) {
       await recordAndCheckVoiceTime(member, userId);
       activeSessions.set(userId, Date.now());
     }
