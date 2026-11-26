@@ -18,7 +18,8 @@ import setupVoicePanel from './setupVoicePanel.js';
 import setupLeaderboard from './setupLeaderboard.js';
 import botCommander from './botCommander.js';
 import sync from './sync.js';
-import syncHistory from './syncHistory.js'; // นำเข้าคำสั่งดึงประวัติย้อนหลัง
+import syncHistory from './syncHistory.js';
+import testDb from './testDb.js'; // 1. นำเข้าคำสั่งเทสฐานข้อมูล
 
 export const commands = [
   chart, 
@@ -41,7 +42,8 @@ export const commands = [
   setupLeaderboard,
   botCommander,
   sync,
-  syncHistory // เพิ่มเข้าอาร์เรย์คำสั่ง
+  syncHistory,
+  testDb // 2. เพิ่มเข้าอาร์เรย์คำสั่ง
 ];
 
 export const byName = new Map(commands.map((c) => [c.data.name, c]));
