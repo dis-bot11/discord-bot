@@ -11,11 +11,6 @@ import { commands } from './commands/index.js';
 import { handleBotJoinGuard, monitorBotActions } from './systems/antiNukeSystem.js';
 import { BOARD_CONFIG_PATH, generateLeaderboardEmbed } from './commands/setupLeaderboard.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-// พาร์ธไฟล์เก็บเวลาห้องเสียงตัวเดียวกับคำสั่ง /voicetime
-const VOICE_DATA_PATH = path.join(__dirname, 'data/voiceTime.json');
-
 // เปิดพอร์ต HTTP ให้ Render ตรวจจับสถานะ Live และรับสัญญาณปลุกจาก UptimeRobot
 const port = process.env.PORT || 3000;
 http
@@ -60,10 +55,10 @@ async function connectToVoiceChannel(c) {
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
-        await Promise.race:[
+        await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
           entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
-        ];
+        ]);
       } catch {
         connection.destroy();
         setTimeout(() => connectToVoiceChannel(c), 5_000); // รอ 5 วินาทีแล้วเชื่อมต่อใหม่
@@ -73,46 +68,6 @@ async function connectToVoiceChannel(c) {
     console.log(`🔊 บอทเข้าห้องเสียง #${channel.name} ค้างไว้เรียบร้อยแล้ว!`);
   } catch (error) {
     console.error('❌ เกิดข้อผิดพลาดในการเข้าห้องเสียง:', error.message);
-  }
-}
-
-// 🎯 ฟังก์ชันตรวจสอบและแจกยศตามชั่วโมงสะสมหลายระดับอัตโนมัติจากไฟล์ JSON ทุก 1 นาที
-async function checkAndAssignVoiceRolesFromJson(guild) {
-  try {
-    if (!fs.existsSync(VOICE_DATA_PATH)) return;
-    const data = JSON.parse(fs.readFileSync(VOICE_DATA_PATH, 'utf8'));
-
-    // 📌 รายการยศตามชั่วโมงที่พี่กำหนด
-    const milestoneRoles = [
-      { hours: 50, roleId: '1573540691164926042' },
-      { hours: 100, roleId: '1573540865350311956' },
-      { hours: 250, roleId: '1573541072095682591' },
-      { hours: 500, roleId: '1573553344738234498' },
-    ];
-
-    for (const [userId, minutes] of Object.entries(data)) {
-      const hours = minutes / 60;
-
-      const member = await guild.members.fetch(userId).catch(() => null);
-      if (!member) continue;
-
-      // วนลูปเช็กทุกๆ ยศตามเป้าหมาย
-      for (const milestone of milestoneRoles) {
-        if (!milestone.roleId) continue;
-
-        const hasRole = member.roles.cache.has(milestone.roleId);
-
-        // ถ้าเวลาถึงเป้าหมายแล้ว และยังไม่มียศนี้ -> เติมยศให้ทันที!
-        if (hours >= milestone.hours && !hasRole) {
-          await member.roles.add(milestone.roleId).catch((err) => {
-            console.error(`[Voice Role] แจกยศ ${milestone.hours} ชม. ให้ ${member.user.tag} ไม่สำเร็จ:`, err);
-          });
-          console.log(`[Voice Role] 🎯 แจกยศสะสม ${milestone.hours} ชั่วโมง ให้กับ ${member.user.tag} (${hours.toFixed(1)} ชม.) สำเร็จ!`);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[Voice Role Error] เกิดข้อผิดพลาดในการแจกยศหลายระดับ:', err);
   }
 }
 
@@ -175,26 +130,21 @@ client.once(Events.ClientReady, async (c) => {
 
   await refreshChart(c);
 
-  // ⏱️ ระบบตั้งเวลาอัปเดตบอร์ดออนเสียง + เช็กแจกยศทุกระดับอัตโนมัติทุกๆ 1 นาที
+  // ⏱️ ระบบตั้งเวลาอัปเดตบอร์ดออนเสียงอัตโนมัติทุกๆ 1 นาที (ดึงเวลาสด + ป้องกันเวลาหาย)
   setInterval(async () => {
     try {
-      // 1. อัปเดตข้อความบอร์ดจัดอันดับ
-      if (fs.existsSync(BOARD_CONFIG_PATH)) {
-        const { channelId, messageId } = JSON.parse(fs.readFileSync(BOARD_CONFIG_PATH, 'utf8'));
-        const channel = await c.channels.fetch(channelId).catch(() => null);
-        if (channel) {
-          const message = await channel.messages.fetch(messageId).catch(() => null);
-          if (message) {
-            await message.edit({ embeds: [generateLeaderboardEmbed()] });
-          }
-        }
-      }
+      if (!fs.existsSync(BOARD_CONFIG_PATH)) return;
+      const { channelId, messageId } = JSON.parse(fs.readFileSync(BOARD_CONFIG_PATH, 'utf8'));
 
-      // 2. เช็กและแจกยศทุกระดับตามชั่วโมงที่กำหนดอัตโนมัติ
-      await checkAndAssignVoiceRolesFromJson(guild);
+      const channel = await c.channels.fetch(channelId).catch(() => null);
+      if (!channel) return;
 
+      const message = await channel.messages.fetch(messageId).catch(() => null);
+      if (!message) return;
+
+      await message.edit({ embeds: [generateLeaderboardEmbed()] });
     } catch (err) {
-      // จัดการกรณีเกิดข้อผิดพลาดในลูป
+      // จัดการกรณีข้อความถูกลบหรือห้องไม่พบ
     }
   }, 1 * 60 * 1000); // ทุก 1 นาที
 
