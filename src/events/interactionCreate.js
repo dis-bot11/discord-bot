@@ -5,7 +5,7 @@ import { config } from '../config.js';
 import { handleModerationButtons, handleModerationSubmit } from '../systems/moderationSystem.js';
 import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.js';
 import { activeSessions } from './voiceStateUpdate.js';
-import { supabase, getVoiceTimes } from '../utils/supabase.js'; // 👈 ดึงฟังก์ชันเชื่อม Supabase มาใช้
+import { supabase, getVoiceTimes } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
 async function replyError(interaction, text) {
@@ -25,10 +25,8 @@ export default {
   async execute(interaction, client) {
     if (!isOurGuild(interaction.guild)) return;
 
-    // 🛰️ ดักจับปุ่มและเมนูของระบบศูนย์บัญชาการบอท (Bot Commander)
     if (await handleBotCommanderInteraction(interaction)) return;
 
-    // 🛡️ ดักจับปุ่มเปิด-ปิด และรีเฟรชแผงถาวรของ Bot Guard
     if (interaction.isButton() && (interaction.customId === 'toggle_bot_guard' || interaction.customId === 'refresh_bot_guard')) {
       try {
         let currentState = getBotGuardStatus();
@@ -70,16 +68,13 @@ export default {
       }
     }
 
-    // 🎙️ ดักจับปุ่มระบบเช็กเวลาออนห้องเสียง & ดูอันดับ (ดึงข้อมูลจาก Supabase โดยตรง)
     if (interaction.isButton() && (interaction.customId === 'btn_check_voicetime' || interaction.customId === 'btn_voice_leaderboard')) {
       try {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-        // ดึงข้อมูลเวลาทั้งหมดจาก Supabase
         const dbTimes = await getVoiceTimes();
         const now = Date.now();
 
-        // ปุ่มที่ 1: เช็กเวลาของตัวเอง (เห็นคนเดียว + ส่ง Log ไปห้องบันทึก)
         if (interaction.customId === 'btn_check_voicetime') {
           const userId = interaction.user.id;
           const savedMinutes = dbTimes[userId] || 0;
@@ -103,24 +98,10 @@ export default {
             );
 
           await interaction.editReply({ embeds: [embed] });
-
-          // ส่งประวัติไปห้องบันทึกเวลาตามไอดีที่กำหนด
-          const recordChannelId = '1573560219777376346';
-          const recordChannel = interaction.guild.channels.cache.get(recordChannelId);
-          if (recordChannel) {
-            const publicEmbed = new EmbedBuilder()
-              .setColor(COLORS.good)
-              .setTitle('📊 บันทึกการตรวจสอบเวลาออนเสียง')
-              .setDescription(`สมาชิก: ${interaction.user} (${interaction.user.tag})\n⏱️ เวลาสะสม: **${hours} ชม. ${mins} นาที**`)
-              .setTimestamp();
-            await recordChannel.send({ embeds: [publicEmbed] }).catch(() => {});
-          }
           return;
         }
 
-        // ปุ่มที่ 2: ดู 10 อันดับสูงสุด (เห็นคนเดียว)
         if (interaction.customId === 'btn_voice_leaderboard') {
-          // รวมเวลาสดของคนที่กำลังออนอยู่เข้ากับฐานข้อมูลก่อนจัดอันดับ
           const combined = { ...dbTimes };
           for (const [userId, joinedAt] of activeSessions.entries()) {
             const liveMinutes = Math.floor((now - joinedAt) / 60000);
@@ -155,7 +136,6 @@ export default {
       }
     }
 
-    // 🛡️ ดักจับปุ่มและ Modal ของระบบลงโทษ
     if (await handleModerationButtons(interaction)) return;
     if (await handleModerationSubmit(interaction)) return;
 
