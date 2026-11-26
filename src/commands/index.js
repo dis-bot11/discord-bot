@@ -16,7 +16,8 @@ import unban from './unban.js';
 import botguard from './botguard.js';
 import setupVoicePanel from './setupVoicePanel.js';
 import setupLeaderboard from './setupLeaderboard.js';
-import botCommander from './botCommander.js'; // 1. นำเข้าคำสั่งแผงคุมบอท
+import botCommander from './botCommander.js';
+import sync from './sync.js'; // 1. นำเข้าคำสั่ง sync ที่เราสร้างไว้
 
 export const commands = [
   chart, 
@@ -37,7 +38,8 @@ export const commands = [
   botguard,
   setupVoicePanel,
   setupLeaderboard,
-  botCommander // 2. เพิ่มเข้ามาในรายการคำสั่ง
+  botCommander,
+  sync // 2. เพิ่มเข้ามาในรายการคำสั่ง
 ];
 
 export const byName = new Map(commands.map((c) => [c.data.name, c]));
