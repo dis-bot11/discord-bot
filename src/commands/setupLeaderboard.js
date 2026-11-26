@@ -8,7 +8,7 @@ import { activeSessions, DATA_PATH } from '../events/voiceStateUpdate.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const BOARD_CONFIG_PATH = path.join(__dirname, '../data/leaderboardConfig.json');
 
-// ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาในไฟล์ที่เป็นชั่วโมง + เวลาสด)
+// ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาในไฟล์ + เวลาสดที่กำลังออนอยู่ตอนนี้)
 export function generateLeaderboardEmbed() {
   let data = {};
   if (fs.existsSync(DATA_PATH)) {
@@ -19,26 +19,24 @@ export function generateLeaderboardEmbed() {
     }
   }
 
-  // ⏱️ นำเวลาในไฟล์ JSON (หน่วยเป็นชั่วโมง) มาบวกกับเวลาสดที่กำลังออนอยู่ (แปลงนาทีเป็นชั่วโมง)
+  // ⏱️ นำเวลาในไฟล์ JSON มาบวกกับเวลาสดของคนที่กำลังนั่งอยู่ในห้องตอนนี้
   const combined = { ...data };
   const now = Date.now();
   for (const [userId, joinedAt] of activeSessions.entries()) {
-    const liveHours = (now - joinedAt) / (1000 * 60 * 60); // แปลงมิลลิวินาทีเป็นชั่วโมง
-    combined[userId] = (combined[userId] || 0) + liveHours;
+    const liveMinutes = Math.floor((now - joinedAt) / 60000);
+    combined[userId] = (combined[userId] || 0) + liveMinutes;
   }
 
   const sorted = Object.entries(combined)
-    .filter(([, hours]) => hours > 0)
+    .filter(([, mins]) => mins > 0)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 20); // ดึงมา 20 อันดับ
 
   const rankList = sorted.length
     ? sorted
-        .map(([id, totalHours], idx) => {
+        .map(([id, m], idx) => {
           const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `**#${idx + 1}**`;
-          const hrs = Math.floor(totalHours);
-          const mins = Math.floor((totalHours - hrs) * 60);
-          return `${medal} <@${id}> — \`${hrs} ชม. ${mins} นาที\``;
+          return `${medal} <@${id}> — \`${Math.floor(m / 60)} ชม. ${m % 60} นาที\``;
         })
         .join('\n')
     : 'ยังไม่มีข้อมูลเวลาสะสมในระบบ';
@@ -62,6 +60,7 @@ export default {
 
     const message = await interaction.channel.send({ embeds: [generateLeaderboardEmbed()] });
 
+    // บันทึกข้อมูลห้องและข้อความลงไฟล์ Config เผื่อบอทรีสตาร์ท
     const dir = path.dirname(BOARD_CONFIG_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
