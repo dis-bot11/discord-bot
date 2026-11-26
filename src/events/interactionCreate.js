@@ -1,12 +1,12 @@
 import { Events, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import fs from 'node:fs';
 import { byName, byPrefix } from '../commands/index.js';
 import { isOurGuild, COLORS } from '../logger.js';
 import { config } from '../config.js';
 import { handleModerationButtons, handleModerationSubmit } from '../systems/moderationSystem.js';
 import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.js';
-import { activeSessions, DATA_PATH, RANK_TIERS } from './voiceStateUpdate.js';
-import { handleBotCommanderInteraction } from '../commands/botCommander.js'; // 1. นำเข้าตัวจัดการแผงคุมบอท
+import { activeSessions } from './voiceStateUpdate.js';
+import { supabase, getVoiceTimes } from '../utils/supabase.js'; // 👈 ดึงฟังก์ชันเชื่อม Supabase มาใช้
+import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
 async function replyError(interaction, text) {
   try {
@@ -70,38 +70,28 @@ export default {
       }
     }
 
-    // 🎙️ ดักจับปุ่มระบบเช็กเวลาออนห้องเสียง & ดูอันดับ
+    // 🎙️ ดักจับปุ่มระบบเช็กเวลาออนห้องเสียง & ดูอันดับ (ดึงข้อมูลจาก Supabase โดยตรง)
     if (interaction.isButton() && (interaction.customId === 'btn_check_voicetime' || interaction.customId === 'btn_voice_leaderboard')) {
       try {
-        let data = {};
-        if (fs.existsSync(DATA_PATH)) {
-          try {
-            data = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-          } catch {
-            data = {};
-          }
-        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        // ดึงข้อมูลเวลาทั้งหมดจาก Supabase
+        const dbTimes = await getVoiceTimes();
+        const now = Date.now();
 
         // ปุ่มที่ 1: เช็กเวลาของตัวเอง (เห็นคนเดียว + ส่ง Log ไปห้องบันทึก)
         if (interaction.customId === 'btn_check_voicetime') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
           const userId = interaction.user.id;
-          const savedMinutes = data[userId] || 0;
+          const savedMinutes = dbTimes[userId] || 0;
 
           let currentSessionMins = 0;
           if (activeSessions.has(userId)) {
-            currentSessionMins = Math.floor((Date.now() - activeSessions.get(userId)) / 60000);
+            currentSessionMins = Math.floor((now - activeSessions.get(userId)) / 60000);
           }
 
           const totalMinutes = savedMinutes + currentSessionMins;
           const hours = Math.floor(totalMinutes / 60);
           const mins = totalMinutes % 60;
-
-          const nextTier = RANK_TIERS.find((t) => hours < t.hours);
-          const nextGoalText = nextTier
-            ? `อีก **${nextTier.hours - hours} ชั่วโมง** จะถึงยศถัดไป (${nextTier.hours} ชม.)`
-            : '👑 **ปลดล็อกยศสูงสุด (500 ชม.) เรียบร้อยแล้ว!**';
 
           const embed = new EmbedBuilder()
             .setColor(COLORS.info)
@@ -109,8 +99,7 @@ export default {
             .setTitle('⏱️ สถิติเวลาออนห้องเสียงของคุณ')
             .addFields(
               { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true },
-              { name: 'รอบปัจจุบัน', value: currentSessionMins > 0 ? `+${currentSessionMins} นาที` : 'ไม่อยู่ในห้องเสียง', inline: true },
-              { name: '🎯 เป้าหมายถัดไป', value: nextGoalText, inline: false }
+              { name: 'รอบปัจจุบัน', value: currentSessionMins > 0 ? `+${currentSessionMins} นาที` : 'ไม่อยู่ในห้องเสียง', inline: true }
             );
 
           await interaction.editReply({ embeds: [embed] });
@@ -131,9 +120,14 @@ export default {
 
         // ปุ่มที่ 2: ดู 10 อันดับสูงสุด (เห็นคนเดียว)
         if (interaction.customId === 'btn_voice_leaderboard') {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          // รวมเวลาสดของคนที่กำลังออนอยู่เข้ากับฐานข้อมูลก่อนจัดอันดับ
+          const combined = { ...dbTimes };
+          for (const [userId, joinedAt] of activeSessions.entries()) {
+            const liveMinutes = Math.floor((now - joinedAt) / 60000);
+            combined[userId] = (combined[userId] || 0) + liveMinutes;
+          }
 
-          const sorted = Object.entries(data)
+          const sorted = Object.entries(combined)
             .sort(([, a], [, b]) => b - a)
             .slice(0, 10);
 
