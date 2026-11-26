@@ -11,23 +11,20 @@ export default {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
-      // 1. ค้นหาห้อง Log ห้องเสียงในเซิร์ฟเวอร์
       const logChannel = interaction.guild.channels.cache.find(
         c => c.name.includes('log-ห้องเสียง') || c.name.includes('voice-log') || c.name.includes('เสียง')
       );
 
       if (!logChannel) {
-        return interaction.editReply('❌ ไม่พบห้อง Log สำหรับเสียงในเซิร์ฟเวอร์นี้ (กรุณาตรวจสอบชื่อห้อง log)');
+        return interaction.editReply('❌ ไม่พบห้อง Log สำหรับเสียงในเซิร์ฟเวอร์นี้');
       }
 
-      await interaction.editReply(`🔄 กำลังกวาดข้อความประวัติจากห้อง <#${logChannel.id}> ทั้งหมดเพื่อคำนวณเวลา...`);
+      await interaction.editReply(`🔄 กำลังกวาดข้อความประวัติจากห้อง <#${logChannel.id}> ทั้งหมด...`);
 
       let messages = [];
       let lastId = null;
-      let fetching = true;
 
-      // 2. ดึงข้อความทั้งหมดจากห้อง Log แบบวนลูป (รองรับข้อความจำนวนมาก)
-      while (fetching) {
+      while (true) {
         const options = { limit: 100 };
         if (lastId) options.before = lastId;
 
@@ -42,15 +39,14 @@ export default {
       }
 
       if (messages.length === 0) {
-        return interaction.editReply('❌ ไม่พบข้อความประวัติในห้อง Log เลยครับ');
+        return interaction.editReply('❌ ไม่พบข้อความประวัติในห้อง Log');
       }
 
-      // 3. เรียงลำดับข้อความจาก "เก่าสุด ไปหา ใหม่สุด" (Chronological Order) เพื่อจำลองเหตุการณ์จริง
+      // เรียงจากเก่าสุดไปใหม่สุด
       messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-      const userMinutes = {}; // เก็บยอดเวลารวมสะสมของแต่ละคน { userId: totalMinutes }
-      const activeJoins = {}; // เก็บเวลาที่ User เริ่มเข้าห้อง { userId: timestamp }
-
+      const userSeconds = {}; // เก็บสะสมเป็นวินาทีก่อน เพื่อความแม่นยำสูงสุด
+      const activeJoins = {};
       let processedEvents = 0;
 
       for (const msg of messages) {
@@ -59,37 +55,35 @@ export default {
         
         if (msg.embeds.length > 0) {
           const embed = msg.embeds[0];
-          embedText = `${embed.title || ''} ${embed.description || ''} ${embed.fields.map(f => `${f.name || ''} ${f.value || ''}`).join(' ')}`;
+          const fieldsText = embed.fields.map(f => `${f.name || ''} ${f.value || ''}`).join(' ');
+          const footerText = embed.footer?.text || ''; // ดึง ID จาก Footer ด้วย
+          embedText = `${embed.title || ''} ${embed.description || ''} ${fieldsText} ${footerText}`;
         }
 
         const fullText = `${contentText} ${embedText}`;
 
-        // ค้นหา User ID จากข้อความ (รองรับทั้ง Mention และ ID ตรงๆ)
-        const matchUser = fullText.match(/<@!?(\d+)>|(\d{17,19})/);
-        if (!matchUser) continue;
+        // ดึง UID 17-19 หลัก (ให้ความสำคัญกับ ID: xxx ใน Footer ก่อน หรือ Mention)
+        const matchFooterId = fullText.match(/ID:\s*(\d{17,19})/);
+        const matchMention = fullText.match(/<@!?(\d{17,19})>/);
+        const userId = matchFooterId ? matchFooterId[1] : (matchMention ? matchMention[1] : null);
         
-        const userId = matchUser[1] || matchUser[2];
         if (!userId) continue;
 
         const msgTime = msg.createdTimestamp;
 
-        // ตรวจสอบว่าเป็นเหตุการณ์เข้า หรือ ออก
-        const isJoin = /เข้า|join|connected|add|Joined/i.test(fullText);
-        const isLeave = /ออก|leave|disconnected|move|switch|Left/i.test(fullText);
+        // แยกเหตุการณ์ให้ชัดเจนตามหัวข้อ Embed ของบอทพี่
+        const isJoin = /เข้าห้องเสียง/.test(fullText);
+        const isLeave = /ออกจากห้องเสียง|ถูกตัดการเชื่อมต่อห้องเสียง/.test(fullText);
 
-        // ถ้าเป็นการเข้าห้อง
-        if (isJoin && !isLeave) {
+        if (isJoin) {
           activeJoins[userId] = msgTime;
           processedEvents++;
-        } 
-        // ถ้าเป็นการออกจากห้อง และมีบันทึกเวลาเข้าไว้ก่อนหน้า
-        else if (isLeave && activeJoins[userId]) {
-          const durationMs = msgTime - activeJoins[userId];
-          const durationMins = Math.floor(durationMs / 60000); // แปลงเป็นนาที
+        } else if (isLeave && activeJoins[userId]) {
+          const durationSec = Math.floor((msgTime - activeJoins[userId]) / 1000);
 
-          // กรองเคสเวลาที่สมเหตุสมผล (มากกว่า 0 นาที และไม่เกิน 24 ชม. ต่อรอบเพื่อกันบั๊กค้าง)
-          if (durationMins > 0 && durationMins < 1440) {
-            userMinutes[userId] = (userMinutes[userId] || 0) + durationMins;
+          // นับตั้งแต่ 1 วินาทีขึ้นไป และไม่เกิน 24 ชม. (86400 วินาที)
+          if (durationSec > 0 && durationSec < 86400) {
+            userSeconds[userId] = (userSeconds[userId] || 0) + durationSec;
           }
           
           delete activeJoins[userId];
@@ -97,25 +91,31 @@ export default {
         }
       }
 
-      const totalUsers = Object.keys(userMinutes).length;
+      const totalUsers = Object.keys(userSeconds).length;
       if (totalUsers === 0) {
-        return interaction.editReply('❌ ประมวลผล Log แล้ว แต่ไม่พบคู่เหตุการณ์ เข้า-ออก ที่สมบูรณ์');
+        return interaction.editReply('❌ ไม่พบคู่เหตุการณ์ เข้า-ออก ที่สมบูรณ์ใน Log');
       }
 
       await interaction.editReply(`🔄 กำลังบันทึกยอดเวลาสะสมของสมาชิก ${totalUsers} คนลง Supabase...`);
 
-      // 4. บันทึกลง Supabase ทีละคนอย่างแม่นยำ
       let successCount = 0;
-      for (const [userId, totalMinutes] of Object.entries(userMinutes)) {
+      for (const [userId, totalSec] of Object.entries(userSeconds)) {
+        // แปลงวินาทีรวมเป็นนาที (ปัดขึ้นขั้นต่ำ 1 นาทีถ้ามีประวัติออน)
+        const totalMinutes = Math.max(1, Math.floor(totalSec / 60));
+
         const { error } = await supabase
           .from('voice_times')
           .upsert({ 
-            user_id: userId, 
+            user_id: String(userId), 
             minutes: totalMinutes, 
             updated_at: new Date() 
           }, { onConflict: ['user_id'] });
 
-        if (!error) successCount++;
+        if (!error) {
+          successCount++;
+        } else {
+          console.error(`Supabase Upsert Error [${userId}]:`, error);
+        }
       }
 
       await interaction.editReply(
