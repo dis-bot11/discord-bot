@@ -4,7 +4,7 @@ import { supabase } from '../utils/supabase.js';
 export default {
   data: new SlashCommandBuilder()
     .setName('sync_history')
-    .setDescription('ดึงและคำนวณเวลาออนห้องเสียงย้อนหลังอย่างแม่นยำจากห้อง Log (เฉพาะแอดมิน)')
+    .setDescription('ดึงและคำนวณเวลาออนห้องเสียงย้อนหลังตั้งแต่ 21/11/2569 12:00 น. (เฉพาะแอดมิน)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
@@ -45,24 +45,36 @@ export default {
       // เรียงจากเก่าสุดไปใหม่สุด
       messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
-      const userSeconds = {}; // เก็บสะสมเป็นวินาทีก่อน เพื่อความแม่นยำสูงสุด
+      // กำหนดเวลาเริ่มต้นที่อนุญาตให้นับ: 21 พ.ย. 2569 เวลา 12:00:00 น. (UTC+7 -> แปลงเป็น Timestamp)
+      // วันที่ 21 พ.ย. 2026 12:00:00 ICT = 21 พ.ย. 2026 05:00:00 UTC
+      const START_TIMESTAMP = new Date('2026-11-21T12:00:00+07:00').getTime();
+
+      const userSeconds = {};
       const activeJoins = {};
       let processedEvents = 0;
+      let skippedOldEvents = 0;
+
+      const MAX_SESSION_SECONDS = 6 * 3600; // 6 ชั่วโมงต่อรอบ
 
       for (const msg of messages) {
+        // ข้ามข้อความที่เกิดขึ้นก่อนวันที่กำหนด
+        if (msg.createdTimestamp < START_TIMESTAMP) {
+          skippedOldEvents++;
+          continue;
+        }
+
         let contentText = msg.content || '';
         let embedText = '';
         
         if (msg.embeds.length > 0) {
           const embed = msg.embeds[0];
           const fieldsText = embed.fields.map(f => `${f.name || ''} ${f.value || ''}`).join(' ');
-          const footerText = embed.footer?.text || ''; // ดึง ID จาก Footer ด้วย
+          const footerText = embed.footer?.text || '';
           embedText = `${embed.title || ''} ${embed.description || ''} ${fieldsText} ${footerText}`;
         }
 
         const fullText = `${contentText} ${embedText}`;
 
-        // ดึง UID 17-19 หลัก (ให้ความสำคัญกับ ID: xxx ใน Footer ก่อน หรือ Mention)
         const matchFooterId = fullText.match(/ID:\s*(\d{17,19})/);
         const matchMention = fullText.match(/<@!?(\d{17,19})>/);
         const userId = matchFooterId ? matchFooterId[1] : (matchMention ? matchMention[1] : null);
@@ -71,36 +83,46 @@ export default {
 
         const msgTime = msg.createdTimestamp;
 
-        // แยกเหตุการณ์ให้ชัดเจนตามหัวข้อ Embed ของบอทพี่
         const isJoin = /เข้าห้องเสียง/.test(fullText);
+        const isMove = /ย้ายห้องเสียง/.test(fullText);
         const isLeave = /ออกจากห้องเสียง|ถูกตัดการเชื่อมต่อห้องเสียง/.test(fullText);
+        const isMoveToAfk = isMove && /AFK/i.test(fullText);
 
-        if (isJoin) {
-          activeJoins[userId] = msgTime;
-          processedEvents++;
-        } else if (isLeave && activeJoins[userId]) {
-          const durationSec = Math.floor((msgTime - activeJoins[userId]) / 1000);
-
-          // นับตั้งแต่ 1 วินาทีขึ้นไป และไม่เกิน 24 ชม. (86400 วินาที)
-          if (durationSec > 0 && durationSec < 86400) {
+        const closeSession = (endTime) => {
+          if (!activeJoins[userId]) return;
+          const durationSec = Math.floor((endTime - activeJoins[userId]) / 1000);
+          
+          if (durationSec > 0 && durationSec <= MAX_SESSION_SECONDS) {
             userSeconds[userId] = (userSeconds[userId] || 0) + durationSec;
           }
-          
           delete activeJoins[userId];
+        };
+
+        if (isJoin) {
+          delete activeJoins[userId];
+          activeJoins[userId] = msgTime;
+          processedEvents++;
+        } else if (isMove) {
+          closeSession(msgTime);
+          if (!isMoveToAfk) {
+            activeJoins[userId] = msgTime;
+          }
+          processedEvents++;
+        } else if (isLeave) {
+          closeSession(msgTime);
           processedEvents++;
         }
       }
 
       const totalUsers = Object.keys(userSeconds).length;
       if (totalUsers === 0) {
-        return interaction.editReply('❌ ไม่พบคู่เหตุการณ์ เข้า-ออก ที่สมบูรณ์ใน Log');
+        return interaction.editReply('❌ ไม่พบคู่เหตุการณ์ เข้า-ออก ในช่วงเวลาที่กำหนด');
       }
 
-      await interaction.editReply(`🔄 กำลังบันทึกยอดเวลาสะสมของสมาชิก ${totalUsers} คนลง Supabase...`);
+      await interaction.editReply(`🔄 กำลังบันทึกยอดเวลาสะสมตั้งแต่ 21/11/2569 ของสมาชิก ${totalUsers} คนลง Supabase...`);
 
       let successCount = 0;
       for (const [userId, totalSec] of Object.entries(userSeconds)) {
-        // แปลงวินาทีรวมเป็นนาที (ปัดขึ้นขั้นต่ำ 1 นาทีถ้ามีประวัติออน)
         const totalMinutes = Math.max(1, Math.floor(totalSec / 60));
 
         const { error } = await supabase
@@ -119,10 +141,10 @@ export default {
       }
 
       await interaction.editReply(
-        `✅ **ซิงค์ประวัติย้อนหลังสำเร็จเรียบร้อย!**\n` +
-        `- อ่านข้อความ Log ทั้งหมด: \`${messages.length} ข้อความ\`\n` +
-        `- จับคู่เหตุการณ์เข้า-ออกจริง: \`${processedEvents} รายการ\`\n` +
-        `- อัปเดตเวลาลง Supabase สำเร็จ: \`${successCount} คน\``
+        `✅ **ซิงค์เวลาเฉพาะตั้งแต่ 21 พ.ย. 2569 (12:00 น.) สำเร็จ!**\n` +
+        `- ข้ามข้อความเก่าก่อนกำหนด: \`${skippedOldEvents} รายการ\`\n` +
+        `- ประมวลผลเหตุการณ์จริง: \`${processedEvents} รายการ\`\n` +
+        `- อัปเดตยอดเวลาลง Supabase: \`${successCount} คน\``
       );
 
     } catch (error) {
