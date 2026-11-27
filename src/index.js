@@ -146,24 +146,24 @@ client.once(Events.ClientReady, async (c) => {
         // ข้ามบอท, ข้ามคนที่ไม่ได้อยู่ห้องเสียง, และตัดห้อง AFK ออกเด็ดขาด 100%
         if (!member || member.user.bot || !channelId || channelId === afkChannelId) continue;
 
-        // บวกเวลาเพิ่ม 1 นาทีลง Supabase ทันที
+        // บวกเวลาเพิ่ม 1 นาทีลง Supabase (ตารางปัจจุบัน) ทันที
         await addVoiceMinutes(member.id, 1);
 
-        // ดึงเวลาสะสมล่าสุดมาเช็กแจกยศอัตโนมัติ
-        const { data } = await supabase
-          .from('voice_times')
-          .select('minutes')
-          .eq('user_id', member.id)
-          .single();
+        // ✅ ดึงเวลาสะสมรวมจากทั้ง 3 ตาราง (old + historical + current) มาเช็กแจกยศ
+        const [oldRes, histRes, currRes] = await Promise.all([
+          supabase.from('voice_times_old').select('minutes').eq('user_id', member.id).maybeSingle(),
+          supabase.from('voice_times_historical').select('minutes').eq('user_id', member.id).maybeSingle(),
+          supabase.from('voice_times').select('minutes').eq('user_id', member.id).maybeSingle()
+        ]);
 
-        if (data) {
-          const totalHours = Math.floor(data.minutes / 60);
-          for (const tier of RANK_TIERS) {
-            if (totalHours >= tier.hours && tier.roleId && !tier.roleId.includes('ใส่_ROLE_ID')) {
-              if (!member.roles.cache.has(tier.roleId)) {
-                await member.roles.add(tier.roleId, `ออนห้องเสียงสะสมครบ ${tier.hours} ชั่วโมง`).catch(() => {});
-                console.log(`[VoiceReward] แจกยศ ${tier.hours} ชม. ให้ ${member.user.tag} สำเร็จ`);
-              }
+        const totalMinutes = (oldRes.data?.minutes || 0) + (histRes.data?.minutes || 0) + (currRes.data?.minutes || 0);
+        const totalHours = Math.floor(totalMinutes / 60);
+
+        for (const tier of RANK_TIERS) {
+          if (totalHours >= tier.hours && tier.roleId && !tier.roleId.includes('ใส่_ROLE_ID')) {
+            if (!member.roles.cache.has(tier.roleId)) {
+              await member.roles.add(tier.roleId, `ออนห้องเสียงสะสมครบ ${tier.hours} ชั่วโมง`).catch(() => {});
+              console.log(`[VoiceReward] แจกยศ ${tier.hours} ชม. ให้ ${member.user.tag} สำเร็จ`);
             }
           }
         }
