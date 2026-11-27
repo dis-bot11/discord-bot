@@ -4,7 +4,6 @@ import { isOurGuild, COLORS } from '../logger.js';
 import { config } from '../config.js';
 import { handleModerationButtons, handleModerationSubmit } from '../systems/moderationSystem.js';
 import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.js';
-import { activeSessions } from './voiceStateUpdate.js';
 import { supabase, getVoiceTimes } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
@@ -73,18 +72,10 @@ export default {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const dbTimes = await getVoiceTimes();
-        const now = Date.now();
 
         if (interaction.customId === 'btn_check_voicetime') {
           const userId = interaction.user.id;
-          const savedMinutes = dbTimes[userId] || 0;
-
-          let currentSessionMins = 0;
-          if (activeSessions.has(userId)) {
-            currentSessionMins = Math.floor((now - activeSessions.get(userId)) / 60000);
-          }
-
-          const totalMinutes = savedMinutes + currentSessionMins;
+          const totalMinutes = dbTimes[userId] || 0;
           const hours = Math.floor(totalMinutes / 60);
           const mins = totalMinutes % 60;
 
@@ -93,8 +84,7 @@ export default {
             .setAuthor({ name: interaction.user.tag, iconURL: interaction.user.displayAvatarURL() })
             .setTitle('⏱️ สถิติเวลาออนห้องเสียงของคุณ')
             .addFields(
-              { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true },
-              { name: 'รอบปัจจุบัน', value: currentSessionMins > 0 ? `+${currentSessionMins} นาที` : 'ไม่อยู่ในห้องเสียง', inline: true }
+              { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true }
             );
 
           await interaction.editReply({ embeds: [embed] });
@@ -102,13 +92,8 @@ export default {
         }
 
         if (interaction.customId === 'btn_voice_leaderboard') {
-          const combined = { ...dbTimes };
-          for (const [userId, joinedAt] of activeSessions.entries()) {
-            const liveMinutes = Math.floor((now - joinedAt) / 60000);
-            combined[userId] = (combined[userId] || 0) + liveMinutes;
-          }
-
-          const sorted = Object.entries(combined)
+          const sorted = Object.entries(dbTimes)
+            .filter(([, m]) => m > 0)
             .sort(([, a], [, b]) => b - a)
             .slice(0, 10);
 
