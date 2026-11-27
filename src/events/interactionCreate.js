@@ -4,8 +4,37 @@ import { isOurGuild, COLORS } from '../logger.js';
 import { config } from '../config.js';
 import { handleModerationButtons, handleModerationSubmit } from '../systems/moderationSystem.js';
 import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.js';
-import { supabase, getVoiceTimes } from '../utils/supabase.js';
+import { supabase } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
+
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด
+async function getCombinedVoiceTimes() {
+  try {
+    const [oldRes, histRes, currRes] = await Promise.all([
+      supabase.from('voice_times_old').select('user_id, minutes'),
+      supabase.from('voice_times_historical').select('user_id, minutes'),
+      supabase.from('voice_times').select('user_id, minutes')
+    ]);
+
+    const totals = {};
+    const addData = (rows) => {
+      if (!rows) return;
+      for (const row of rows) {
+        if (!row.user_id) continue;
+        totals[row.user_id] = (totals[row.user_id] || 0) + (row.minutes || 0);
+      }
+    };
+
+    addData(oldRes.data);
+    addData(histRes.data);
+    addData(currRes.data);
+
+    return totals;
+  } catch (error) {
+    console.error('Error fetching combined voice times for buttons:', error);
+    return {};
+  }
+}
 
 async function replyError(interaction, text) {
   try {
@@ -71,7 +100,8 @@ export default {
       try {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-        const dbTimes = await getVoiceTimes();
+        // ✅ แก้ไขให้เรียกใช้ฟังก์ชันดึงข้อมูลรวม 3 ตาราง
+        const dbTimes = await getCombinedVoiceTimes();
 
         if (interaction.customId === 'btn_check_voicetime') {
           const userId = interaction.user.id;
