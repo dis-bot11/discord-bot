@@ -3,25 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COLORS } from '../logger.js';
-import { activeSessions } from '../events/voiceStateUpdate.js';
 import { getVoiceTimes } from '../utils/supabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const BOARD_CONFIG_PATH = path.join(__dirname, '../data/leaderboardConfig.json');
 
-// ☁️ ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาจาก Supabase + เวลาสดที่กำลังออนอยู่ตอนนี้)
+// ☁️ ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาล่าสุดจาก Supabase มาจัดอันดับ)
 export async function generateLeaderboardEmbed() {
   const data = await getVoiceTimes();
 
-  // ⏱️ นำเวลาใน Supabase มาบวกกับเวลาสดของคนที่กำลังนั่งอยู่ในห้องตอนนี้
-  const combined = { ...data };
-  const now = Date.now();
-  for (const [userId, joinedAt] of activeSessions.entries()) {
-    const liveMinutes = Math.floor((now - joinedAt) / 60000);
-    combined[userId] = (combined[userId] || 0) + liveMinutes;
-  }
-
-  const sorted = Object.entries(combined)
+  const sorted = Object.entries(data)
     .filter(([, mins]) => mins > 0)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 20); // ดึงมา 20 อันดับ
