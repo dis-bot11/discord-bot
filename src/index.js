@@ -10,6 +10,7 @@ import { refreshChart } from './chart.js';
 import { commands } from './commands/index.js';
 import { handleBotJoinGuard, monitorBotActions } from './systems/antiNukeSystem.js';
 import { BOARD_CONFIG_PATH, generateLeaderboardEmbed } from './commands/setupLeaderboard.js';
+import { supabase, addVoiceMinutes } from './utils/supabase.js';
 
 // เปิดพอร์ต HTTP ให้ Render ตรวจจับสถานะ Live และรับสัญญาณปลุกจาก UptimeRobot
 const port = process.env.PORT || 3000;
@@ -25,9 +26,9 @@ http
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers, // ต้องเปิด Server Members Intent ใน Developer Portal
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, // ต้องเปิด Message Content Intent ใน Developer Portal
+    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildModeration,
   ],
@@ -49,8 +50,8 @@ async function connectToVoiceChannel(c) {
       channelId: channel.id,
       guildId: channel.guild.id,
       adapterCreator: channel.guild.voiceAdapterCreator,
-      selfDeaf: true, // ปิดหูฟังบอท
-      selfMute: true, // ปิดไมค์บอท
+      selfDeaf: true,
+      selfMute: true,
     });
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
@@ -61,7 +62,7 @@ async function connectToVoiceChannel(c) {
         ]);
       } catch {
         connection.destroy();
-        setTimeout(() => connectToVoiceChannel(c), 5_000); // รอ 5 วินาทีแล้วเชื่อมต่อใหม่
+        setTimeout(() => connectToVoiceChannel(c), 5_000);
       }
     });
 
@@ -101,38 +102,74 @@ client.on(Events.GuildRoleDelete, async (role) => {
   }
 });
 
+// ⚙️ ตั้งค่าระดับยศตามชั่วโมงสะสม
+const RANK_TIERS = [
+  { hours: 50, roleId: '1573540691164926042' },
+  { hours: 100, roleId: '1573540865350311956' },
+  { hours: 250, roleId: '1573541072095682591' },
+  { hours: 500, roleId: '1573553344738234498' },
+];
+
 client.once(Events.ClientReady, async (c) => {
   console.log(`✅ ออนไลน์แล้วในชื่อ ${c.user.tag} (แฟม ${config.familyName} [${config.familyTag}])`);
 
-  // สั่งให้บอทเข้าห้องเสียงทันทีที่ออนไลน์
   await connectToVoiceChannel(c);
 
   let guild;
   try {
     guild = await c.guilds.fetch(config.guildId);
-    // โหลดรายชื่อสมาชิกทั้งหมดเข้าแคช เพื่อให้เทียบ "ก่อน/หลัง" (ยศ ชื่อเล่น Timeout) ได้ครบทุกคน
     const members = await guild.members.fetch();
     console.log(`โหลดรายชื่อสมาชิกแล้ว ${members.size} คน`);
   } catch (error) {
-    console.error('โหลดรายชื่อสมาชิกไม่สำเร็จ (ตรวจว่าเปิด Server Members Intent และ GUILD_ID ถูกต้อง):', error.message);
+    console.error('โหลดรายชื่อสมาชิกไม่สำเร็จ:', error.message);
     return;
   }
 
-  // ลงทะเบียน Slash Command (ต้องเชิญบอทด้วย scope applications.commands)
   try {
     await guild.commands.set(commands.map((command) => command.data.toJSON()));
     console.log(`✅ ลงทะเบียนคำสั่ง ${commands.length} คำสั่งแล้ว`);
   } catch (error) {
-    console.error(
-      '❌ ลงทะเบียนคำสั่งไม่สำเร็จ: ต้องเชิญบอทใหม่โดยติ๊ก scope "applications.commands" ด้วย (' + error.message + ')',
-    );
+    console.error('❌ ลงทะเบียนคำสั่งไม่สำเร็จ:', error.message);
   }
 
   await refreshChart(c);
 
-  // ⏱️ ระบบตั้งเวลาอัปเดตบอร์ดออนเสียงอัตโนมัติทุกๆ 1 นาที (ดึงเวลาสดจาก Supabase + ป้องกันเวลาหาย)
+  // ⏱️ [ActivityRank] ระบบกวาดเช็กคนออนห้องเสียง + บวกเวลาสด 1 นาที + แจกยศ + อัปเดตบอร์ด ทุกๆ 1 นาที
   setInterval(async () => {
     try {
+      const afkChannelId = guild.afkChannelId;
+
+      for (const [, voiceState] of guild.voiceStates.cache) {
+        const member = voiceState.member;
+        const channelId = voiceState.channelId;
+
+        // ข้ามบอท, ข้ามคนที่ไม่ได้อยู่ห้องเสียง, และตัดห้อง AFK ออกเด็ดขาด 100%
+        if (!member || member.user.bot || !channelId || channelId === afkChannelId) continue;
+
+        // บวกเวลาเพิ่ม 1 นาทีลง Supabase ทันที
+        await addVoiceMinutes(member.id, 1);
+
+        // ดึงเวลาสะสมล่าสุดมาเช็กแจกยศอัตโนมัติ
+        const { data } = await supabase
+          .from('voice_times')
+          .select('minutes')
+          .eq('user_id', member.id)
+          .single();
+
+        if (data) {
+          const totalHours = Math.floor(data.minutes / 60);
+          for (const tier of RANK_TIERS) {
+            if (totalHours >= tier.hours && tier.roleId && !tier.roleId.includes('ใส่_ROLE_ID')) {
+              if (!member.roles.cache.has(tier.roleId)) {
+                await member.roles.add(tier.roleId, `ออนห้องเสียงสะสมครบ ${tier.hours} ชั่วโมง`).catch(() => {});
+                console.log(`[VoiceReward] แจกยศ ${tier.hours} ชม. ให้ ${member.user.tag} สำเร็จ`);
+              }
+            }
+          }
+        }
+      }
+
+      // อัปเดตหน้าบอร์ด Leaderboard ใน Discord
       if (!fs.existsSync(BOARD_CONFIG_PATH)) return;
       const { channelId, messageId } = JSON.parse(fs.readFileSync(BOARD_CONFIG_PATH, 'utf8'));
 
@@ -145,97 +182,21 @@ client.once(Events.ClientReady, async (c) => {
       const embed = await generateLeaderboardEmbed();
       await message.edit({ embeds: [embed] });
     } catch (err) {
-      // จัดการกรณีข้อความถูกลบหรือห้องไม่พบ
+      console.error('[ActivityRank Tick Error]:', err);
     }
-  }, 1 * 60 * 1000); // ทุก 1 นาที
+  }, 1 * 60 * 1000); // ทุก 1 นาทีเป๊ะ
 
-  // ตรวจการตั้งค่า: บอกชัดๆ ว่าห้อง log ไหนใช้ได้ ไหนตั้งผิด/ขาดสิทธิ์
+  // ตรวจการตั้งค่าและสิทธิ์ต่างๆ
   try {
     const me = guild.members.me ?? (await guild.members.fetchMe());
     if (!me.permissions.has('ViewAuditLog')) {
-      console.warn('⚠️ บอทไม่มีสิทธิ์ View Audit Log ช่อง "ผู้ดำเนินการ" ใน log จะขึ้นว่า ไม่ทราบ');
-    }
-    if (config.autoNickname && !me.permissions.has('ManageNicknames')) {
-      console.warn('⚠️ เปิด AUTO_NICKNAME แต่บอทไม่มีสิทธิ์ Manage Nicknames');
-    }
-
-    // สิทธิ์ที่คำสั่งผู้ดูแลต้องใช้
-    const needed = {
-      BanMembers: '/แบน',
-      KickMembers: '/ลงโทษ (เตะ)',
-      ModerateMembers: '/ลงโทษ (Timeout)',
-      ManageNicknames: '/จัดชื่อแฟม และ AUTO_NICKNAME',
-    };
-    if (config.autoRoleId) needed.ManageRoles = 'ให้ยศอัตโนมัติ';
-    for (const [perm, usedFor] of Object.entries(needed)) {
-      if (!me.permissions.has(perm)) console.warn(`⚠️ บอทไม่มีสิทธิ์ ${perm} (ใช้กับ ${usedFor})`);
-    }
-
-    // ยศผู้ดูแล / ยศในผัง / ยศอัตโนมัติ ต้องมีอยู่จริงในเซิร์ฟเวอร์
-    for (const id of config.adminRoleIds) {
-      const role = guild.roles.cache.get(id);
-      console.log(role ? `✅ ยศผู้ดูแล → ${role.name} (${role.members.size} คน)` : `❌ ยศผู้ดูแลไอดี ${id} ไม่พบในเซิร์ฟเวอร์นี้`);
-    }
-    for (const id of config.chartRoleIds) {
-      if (!guild.roles.cache.has(id)) console.warn(`❌ ยศในผังแฟมไอดี ${id} ไม่พบในเซิร์ฟเวอร์นี้ (ตรวจ CHART_ROLE_IDS)`);
-    }
-    if (config.autoRoleId) {
-      const role = guild.roles.cache.get(config.autoRoleId);
-      if (!role) {
-        console.warn(`❌ ยศอัตโนมัติไอดี ${config.autoRoleId} ไม่พบในเซิร์ฟเวอร์นี้ (ตรวจ AUTO_ROLE_ID)`);
-      } else if (role.position >= me.roles.highest.position) {
-        console.warn(`❌ ยศอัตโนมัติ "${role.name}" อยู่สูงกว่าหรือเท่ากับยศบอท บอทจะให้ยศนี้ไม่ได้ (ลากยศบอทให้สูงกว่า)`);
-      } else {
-        console.log(`✅ ยศอัตโนมัติสำหรับสมาชิกใหม่ → ${role.name}`);
-      }
-    }
-
-    // ห้อง: required = ไม่ตั้งแล้วฟีเจอร์นั้นไม่ทำงาน, ไม่ใช่ required = ไม่ตั้งจะโพสต์ในห้องที่พิมพ์คำสั่ง
-    const labels = {
-      welcome: ['ต้อนรับ', true],
-      member: ['log-สมาชิก', true],
-      message: ['log-ข้อความ', true],
-      voice: ['log-เสียง', true],
-      mod: ['log-แอดมิน', true],
-      announce: ['ประกาศ', false],
-      notice: ['แจ้งก่อน', false],
-      punish: ['ประกาศโทษ', false],
-    };
-
-    for (const [key, [label, required]] of Object.entries(labels)) {
-      const id = config.channels[key];
-      if (!id) {
-        console.warn(
-          required
-            ? `⚠️ ห้อง ${label}: ยังไม่ได้ตั้งค่า (ตัวแปรว่าง) จะไม่ส่ง log ประเภทนี้`
-            : `ℹ️ ห้อง ${label}: ไม่ได้ตั้งค่า จะโพสต์ในห้องที่พิมพ์คำสั่งแทน`,
-        );
-        continue;
-      }
-      try {
-        const channel = await c.channels.fetch(id);
-        if (channel.guildId !== config.guildId) {
-          console.warn(`❌ ห้อง ${label}: ไอดี ${id} เป็นห้องของเซิร์ฟเวอร์อื่น`);
-          continue;
-        }
-        const missing = ['ViewChannel', 'SendMessages', 'EmbedLinks'].filter(
-          (perm) => !channel.permissionsFor(me)?.has(perm),
-        );
-        if (missing.length > 0) {
-          console.warn(`❌ ห้อง ${label} (#${channel.name}): บอทขาดสิทธิ์ ${missing.join(', ')}`);
-        } else {
-          console.log(`✅ ห้อง ${label} → #${channel.name}`);
-        }
-      } catch (error) {
-        console.warn(`❌ ห้อง ${label}: หาห้องไอดี ${id} ไม่เจอ หรือบอทเข้าไม่ถึง (${error.message})`);
-      }
+      console.warn('⚠️ บอทไม่มีสิทธิ์ View Audit Log');
     }
   } catch (error) {
     console.error('ตรวจการตั้งค่าไม่สำเร็จ:', error.message);
   }
 });
 
-// กันบอทล่มทั้งตัวจาก error ที่หลุดมา
 process.on('unhandledRejection', (error) => console.error('[unhandledRejection]', error));
 
 await client.login(config.token);
