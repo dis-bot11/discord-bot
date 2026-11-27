@@ -13,7 +13,6 @@ import { supabase, addVoiceMinutes } from '../utils/supabase.js';
 
 export const activeSessions = new Map();
 
-// ⚙️ ใส่เลข Role ID ของแต่ละยศตรงนี้ครับ
 export const RANK_TIERS = [
   { hours: 50, roleId: '1573540691164926042' },
   { hours: 100, roleId: '1573540865350311956' },
@@ -25,16 +24,13 @@ async function recordAndCheckVoiceTime(member, userId) {
   const joinedAt = activeSessions.get(userId);
   if (!joinedAt) return;
 
-  // ลบออกจาก Memory ทันทีเพื่อป้องกันการบันทึกซ้ำซ้อน
   activeSessions.delete(userId);
 
   const durationMinutes = Math.floor((Date.now() - joinedAt) / 60000);
   if (durationMinutes <= 0) return;
 
-  // ☁️ บันทึกเวลาเพิ่มลง Supabase
   await addVoiceMinutes(userId, durationMinutes);
 
-  // ดึงเวลาสะสมล่าสุดของ User คนนี้จาก Supabase มาเช็คยศ
   const { data, error } = await supabase
     .from('voice_times')
     .select('minutes')
@@ -88,25 +84,29 @@ export default {
     const afkChannelId = guild.afkChannelId;
     const userId = member.id;
 
-    // ⏱️ [ระบบจับเวลา] จัดการสถานะห้องเสียงแบบละเอียดและแม่นยำที่สุด
     const isOldAfk = oldChannel && oldChannel === afkChannelId;
     const isNewAfk = newChannel && newChannel === afkChannelId;
 
-    // 1. เข้าห้องปกติครั้งแรก (จากไม่มีห้อง หรือย้ายออกจากห้อง AFK มาห้องปกติ)
+    // ⏱️ [ระบบจับเวลา] ตัดห้อง AFK ออกเด็ดขาด 100%
+    // 1. เข้าห้องปกติครั้งแรก หรือย้ายออกจากห้อง AFK มาห้องปกติ -> เริ่มนับเวลา
     if ((!oldChannel && newChannel && !isNewAfk) || (isOldAfk && newChannel && !isNewAfk)) {
       activeSessions.set(userId, Date.now());
     }
-    // 2. ออกจากห้องปกติ หรือย้ายเข้าห้อง AFK -> บันทึกเวลาสะสมแล้วหยุดนับ
+    // 2. ออกจากห้องปกติ, หรือย้ายเข้าห้อง AFK -> บันทึกเวลาสะสมแล้วหยุดนับทันที
     else if ((oldChannel && !isOldAfk && !newChannel) || (oldChannel && !isOldAfk && isNewAfk)) {
       await recordAndCheckVoiceTime(member, userId);
     }
-    // 3. ย้ายห้องปกติไปยังห้องปกติอื่น (Switch Channel ระหว่างห้องใช้งานจริง)
+    // 3. ย้ายระหว่างห้องปกติด้วยกันเอง -> บันทึกของเก่าแล้วเริ่มนับเวลาห้องใหม่ต่อ
     else if (oldChannel && newChannel && !isOldAfk && !isNewAfk && oldChannel !== newChannel) {
       await recordAndCheckVoiceTime(member, userId);
       activeSessions.set(userId, Date.now());
     }
+    // 4. กรณีที่อยู่ในห้อง AFK อยู่แล้ว แล้วกดเปลี่ยนไปห้อง AFK อื่น (หรือขยับใน AFK) -> เคลียร์ทิ้งไม่ให้นับ
+    else if (isNewAfk) {
+      activeSessions.delete(userId);
+    }
 
-    // 1. ตรวจสอบการเปลี่ยนสถานะ Mute / Deaf ในห้องเดิม
+    // --- (ส่วนจัดการ Log ข้อความและ Mute/Deafen ด้านล่างคงเดิมตามปกติ) ---
     if (oldChannel && oldChannel === newChannel) {
       for (const state of SERVER_STATES) {
         if (Boolean(oldState[state.prop]) === Boolean(newState[state.prop])) continue;
@@ -135,7 +135,6 @@ export default {
       return;
     }
 
-    // 2. กรณีเข้าห้องเสียงจากข้างนอก
     if (!oldChannel && newChannel) {
       await sendLog(
         client,
@@ -149,7 +148,6 @@ export default {
       return;
     }
 
-    // 3. กรณีเปลี่ยนห้องเสียง
     if (oldChannel && newChannel) {
       await new Promise((resolve) => setTimeout(resolve, 800));
 
@@ -187,12 +185,11 @@ export default {
               { name: 'เวลา', value: when() },
             )
             .setFooter({ text: `ID: ${member.id}` }),
-      );
+        );
       }
       return;
     }
 
-    // 4. กรณีออกจากห้องเสียง
     if (oldChannel && !newChannel) {
       const entry = await findRecentAuditEntry(guild, AuditLogEvent.MemberDisconnect, (e) => e.targetId === member.id);
       const forced = Boolean(entry) && claimEntry(entry, Number(entry.extra?.count) || 1);
@@ -221,7 +218,7 @@ export default {
               { name: 'เวลา', value: when() },
             )
             .setFooter({ text: `ID: ${member.id}` }),
-      );
+        );
       }
     }
   },
