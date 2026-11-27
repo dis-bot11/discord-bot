@@ -3,18 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COLORS } from '../logger.js';
-import { supabase } from '../utils/supabase.js'; // ✅ เปลี่ยนมาใช้ Named Import ตรงนี้ครับ
+import { supabase } from '../utils/supabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const BOARD_CONFIG_PATH = path.join(__dirname, '../data/leaderboardConfig.json');
 
-// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตาราง (old + historical + current)
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางอย่างถูกต้องครบถ้วน
 async function getCombinedVoiceTimes() {
-  const { data, error } = await supabase.rpc('get_combined_leaderboard');
-
-  if (error) {
-    console.error('Error fetching combined leaderboard via RPC, using fallback:', error);
-    
+  try {
+    // ดึงข้อมูลจากทั้ง 3 ตารางพร้อมกันแบบชัวร์ๆ
     const [oldRes, histRes, currRes] = await Promise.all([
       supabase.from('voice_times_old').select('user_id, minutes'),
       supabase.from('voice_times_historical').select('user_id, minutes'),
@@ -25,24 +22,21 @@ async function getCombinedVoiceTimes() {
     const addData = (rows) => {
       if (!rows) return;
       for (const row of rows) {
+        if (!row.user_id) continue;
         totals[row.user_id] = (totals[row.user_id] || 0) + (row.minutes || 0);
       }
     };
 
+    // เอาทั้ง 3 ตารางมาบวกสะสมรวมกัน
     addData(oldRes.data);
     addData(histRes.data);
     addData(currRes.data);
 
     return totals;
+  } catch (error) {
+    console.error('Error fetching combined voice times:', error);
+    return {};
   }
-
-  const result = {};
-  if (data) {
-    data.forEach(row => {
-      result[row.user_id] = row.total_minutes;
-    });
-  }
-  return result;
 }
 
 // 🏆 ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาล่าสุดที่รวม 3 ตารางมาจัดอันดับ)
