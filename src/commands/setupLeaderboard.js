@@ -8,15 +8,20 @@ import { supabase } from '../utils/supabase.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const BOARD_CONFIG_PATH = path.join(__dirname, '../data/leaderboardConfig.json');
 
-// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางอย่างถูกต้องครบถ้วน
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูล พร้อมใส่ Debug ดูข้อมูลดิบ
 async function getCombinedVoiceTimes() {
   try {
-    // ดึงข้อมูลจากทั้ง 3 ตารางพร้อมกันแบบชัวร์ๆ
     const [oldRes, histRes, currRes] = await Promise.all([
       supabase.from('voice_times_old').select('user_id, minutes'),
       supabase.from('voice_times_historical').select('user_id, minutes'),
       supabase.from('voice_times').select('user_id, minutes')
     ]);
+
+    // 🔍 [DEBUG] เช็กข้อมูลที่ดึงมาจากแต่ละตารางใน Terminal
+    console.log('--- [DEBUG LEADERBOARD] ---');
+    console.log('1. voice_times_old:', oldRes.data);
+    console.log('2. voice_times_historical:', histRes.data);
+    console.log('3. voice_times:', currRes.data);
 
     const totals = {};
     const addData = (rows) => {
@@ -27,10 +32,12 @@ async function getCombinedVoiceTimes() {
       }
     };
 
-    // เอาทั้ง 3 ตารางมาบวกสะสมรวมกัน
     addData(oldRes.data);
     addData(histRes.data);
     addData(currRes.data);
+
+    console.log('Final Combined Totals:', totals);
+    console.log('---------------------------');
 
     return totals;
   } catch (error) {
@@ -39,7 +46,7 @@ async function getCombinedVoiceTimes() {
   }
 }
 
-// 🏆 ฟังก์ชันสร้างหน้าตา Embed (ดึงเวลาล่าสุดที่รวม 3 ตารางมาจัดอันดับ)
+// 🏆 ฟังก์ชันสร้างหน้าตา Embed
 export async function generateLeaderboardEmbed() {
   const data = await getCombinedVoiceTimes();
 
