@@ -7,19 +7,14 @@ import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.
 import { supabase } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
+const VOICE_LOG_CHANNEL_ID = '1573560219777376346';
+
 // ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลแบบแยกทีละสเต็ปเพื่อเช็กจุดติดขัด
 async function getCombinedVoiceTimes() {
   try {
-    console.log('[DEBUG DB] Starting supabase queries...');
-    
     const oldRes = await supabase.from('voice_times_old').select('user_id, minutes');
-    console.log('[DEBUG DB] voice_times_old fetched, rows:', oldRes.data?.length || 0);
-
     const histRes = await supabase.from('voice_times_historical').select('user_id, minutes');
-    console.log('[DEBUG DB] voice_times_historical fetched, rows:', histRes.data?.length || 0);
-
     const currRes = await supabase.from('voice_times').select('user_id, minutes');
-    console.log('[DEBUG DB] voice_times fetched, rows:', currRes.data?.length || 0);
 
     const totals = {};
     const addData = (rows) => {
@@ -34,7 +29,6 @@ async function getCombinedVoiceTimes() {
     addData(histRes.data);
     addData(currRes.data);
 
-    console.log('[DEBUG DB] Combined successfully. Total users:', Object.keys(totals).length);
     return totals;
   } catch (error) {
     console.error('[DEBUG DB ERROR] Failed inside getCombinedVoiceTimes:', error);
@@ -93,9 +87,7 @@ export default {
       console.log(`[DEBUG BUTTON] START processing button: ${interaction.customId} by ${interaction.user.tag}`);
       
       try {
-        console.log('[DEBUG BUTTON] Calling deferReply...');
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        console.log('[DEBUG BUTTON] deferReply completed successfully!');
 
         const dbTimes = await getCombinedVoiceTimes();
 
@@ -105,6 +97,7 @@ export default {
           const hours = Math.floor(totalMinutes / 60);
           const mins = totalMinutes % 60;
 
+          // 1. ตอบกลับผู้ใช้แบบส่วนตัวที่หน้าจอ
           const embed = new EmbedBuilder()
             .setColor(COLORS.info)
             .setAuthor({ name: interaction.user.tag, iconURL: interaction.user.displayAvatarURL() })
@@ -113,9 +106,27 @@ export default {
               { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true }
             );
 
-          console.log('[DEBUG BUTTON] Sending editReply for check_voicetime...');
           await interaction.editReply({ embeds: [embed] });
-          console.log('[DEBUG BUTTON] Successfully replied to check_voicetime!');
+
+          // 2. ส่ง Embed ไปบันทึกที่ห้อง Log สาธารณะตามรูปตัวอย่าง
+          try {
+            const logChannel = await client.channels.fetch(VOICE_LOG_CHANNEL_ID).catch(() => null);
+            if (logChannel && logChannel.isTextBased()) {
+              const logEmbed = new EmbedBuilder()
+                .setColor(COLORS.info)
+                .setTitle('📊 บันทึกการตรวจสอบเวลาออนเสียง')
+                .setDescription(
+                  `สมาชิก: <@${userId}> (${interaction.user.username})\n` +
+                  `⏱️ เวลาสะสม: **${hours} ชม. ${mins} นาที**`
+                )
+                .setTimestamp();
+
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          } catch (logErr) {
+            console.error('[VoiceLog Error]:', logErr);
+          }
+
           return;
         }
 
@@ -139,9 +150,7 @@ export default {
             .setTitle('🏆 10 อันดับยอดออนห้องเสียงสูงสุด')
             .setDescription(rankList);
 
-          console.log('[DEBUG BUTTON] Sending editReply for voice_leaderboard...');
           await interaction.editReply({ embeds: [embed] });
-          console.log('[DEBUG BUTTON] Successfully replied to voice_leaderboard!');
           return;
         }
       } catch (error) {
