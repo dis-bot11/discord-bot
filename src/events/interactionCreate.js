@@ -7,7 +7,7 @@ import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.
 import { supabase } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
-// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลพร้อมใส่ Debug
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด (พร้อม Debug)
 async function getCombinedVoiceTimes() {
   try {
     console.log('[DEBUG BUTTON] Fetching voice times from 3 tables...');
@@ -126,8 +126,12 @@ export default {
               { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true }
             );
 
-          await interaction.editReply({ embeds: [embed] });
-          console.log('[DEBUG BUTTON] editReply for check_voicetime successful');
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ embeds: [embed] });
+          } else {
+            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+          }
+          console.log('[DEBUG BUTTON] Reply for check_voicetime successful');
           return;
         }
 
@@ -153,8 +157,12 @@ export default {
             .setTitle('🏆 10 อันดับยอดออนห้องเสียงสูงสุด')
             .setDescription(rankList);
 
-          await interaction.editReply({ embeds: [embed] });
-          console.log('[DEBUG BUTTON] editReply for voice_leaderboard successful');
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ embeds: [embed] });
+          } else {
+            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+          }
+          console.log('[DEBUG BUTTON] Reply for voice_leaderboard successful');
           return;
         }
       } catch (error) {
