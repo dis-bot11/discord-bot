@@ -161,4 +161,12 @@ export default {
     try {
       if (interaction.isChatInputCommand()) {
         await byName.get(interaction.commandName)?.execute(interaction, client);
-      } else if (interaction.isModalSubmit() || interaction.isButton
+      } else if (interaction.isModalSubmit() || interaction.isButton()) {
+        const prefix = interaction.customId.split(':')[0];
+        await byPrefix.get(prefix)?.handleComponent?.(interaction, client);
+      }
+    } catch (error) {
+      console.error(`[interaction error]`, error);
+    }
+  },
+};
