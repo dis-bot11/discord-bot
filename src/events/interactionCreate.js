@@ -7,14 +7,19 @@ import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.
 import { supabase } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
-// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด (พร้อม Debug)
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลแบบแยกทีละสเต็ปเพื่อเช็กจุดติดขัด
 async function getCombinedVoiceTimes() {
   try {
-    const [oldRes, histRes, currRes] = await Promise.all([
-      supabase.from('voice_times_old').select('user_id, minutes'),
-      supabase.from('voice_times_historical').select('user_id, minutes'),
-      supabase.from('voice_times').select('user_id, minutes')
-    ]);
+    console.log('[DEBUG DB] Starting supabase queries...');
+    
+    const oldRes = await supabase.from('voice_times_old').select('user_id, minutes');
+    console.log('[DEBUG DB] voice_times_old fetched, rows:', oldRes.data?.length || 0);
+
+    const histRes = await supabase.from('voice_times_historical').select('user_id, minutes');
+    console.log('[DEBUG DB] voice_times_historical fetched, rows:', histRes.data?.length || 0);
+
+    const currRes = await supabase.from('voice_times').select('user_id, minutes');
+    console.log('[DEBUG DB] voice_times fetched, rows:', currRes.data?.length || 0);
 
     const totals = {};
     const addData = (rows) => {
@@ -29,9 +34,10 @@ async function getCombinedVoiceTimes() {
     addData(histRes.data);
     addData(currRes.data);
 
+    console.log('[DEBUG DB] Combined successfully. Total users:', Object.keys(totals).length);
     return totals;
   } catch (error) {
-    console.error('[DEBUG BUTTON ERROR] Error fetching combined voice times:', error);
+    console.error('[DEBUG DB ERROR] Failed inside getCombinedVoiceTimes:', error);
     return {};
   }
 }
@@ -84,11 +90,12 @@ export default {
     }
 
     if (interaction.isButton() && (interaction.customId === 'btn_check_voicetime' || interaction.customId === 'btn_voice_leaderboard')) {
-      console.log(`[DEBUG BUTTON] Button pressed: ${interaction.customId} by user ${interaction.user.tag} (${interaction.user.id})`);
+      console.log(`[DEBUG BUTTON] START processing button: ${interaction.customId} by ${interaction.user.tag}`);
       
       try {
-        // ใช้ deferReply แบบระบุธง MessageFlags.Ephemeral ตรงๆ
+        console.log('[DEBUG BUTTON] Calling deferReply...');
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        console.log('[DEBUG BUTTON] deferReply completed successfully!');
 
         const dbTimes = await getCombinedVoiceTimes();
 
@@ -106,8 +113,9 @@ export default {
               { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true }
             );
 
+          console.log('[DEBUG BUTTON] Sending editReply for check_voicetime...');
           await interaction.editReply({ embeds: [embed] });
-          console.log('[DEBUG BUTTON] Successfully replied to check_voicetime');
+          console.log('[DEBUG BUTTON] Successfully replied to check_voicetime!');
           return;
         }
 
@@ -131,12 +139,13 @@ export default {
             .setTitle('🏆 10 อันดับยอดออนห้องเสียงสูงสุด')
             .setDescription(rankList);
 
+          console.log('[DEBUG BUTTON] Sending editReply for voice_leaderboard...');
           await interaction.editReply({ embeds: [embed] });
-          console.log('[DEBUG BUTTON] Successfully replied to voice_leaderboard');
+          console.log('[DEBUG BUTTON] Successfully replied to voice_leaderboard!');
           return;
         }
       } catch (error) {
-        console.error('[DEBUG BUTTON ERROR] Failed to process button interaction:', error);
+        console.error('[DEBUG BUTTON ERROR] Exception caught in button handler:', error);
         try {
           if (interaction.deferred || interaction.replied) {
             await interaction.editReply({ content: '❌ เกิดข้อผิดพลาดในการตรวจสอบเวลาออนเสียง ลองใหม่อีกครั้ง', embeds: [], components: [] });
@@ -152,12 +161,4 @@ export default {
     try {
       if (interaction.isChatInputCommand()) {
         await byName.get(interaction.commandName)?.execute(interaction, client);
-      } else if (interaction.isModalSubmit() || interaction.isButton()) {
-        const prefix = interaction.customId.split(':')[0];
-        await byPrefix.get(prefix)?.handleComponent?.(interaction, client);
-      }
-    } catch (error) {
-      console.error(`[interaction:${interaction.commandName ?? interaction.customId}] error:`, error);
-    }
-  },
-};
+      } else if (interaction.isModalSubmit() || interaction.isButton
