@@ -139,6 +139,7 @@ client.once(Events.ClientReady, async (c) => {
     try {
       const afkChannelId = guild.afkChannelId;
 
+      // 1. วนลูปบวกเวลาและแจกยศให้คนที่อยู่ในห้องเสียง
       for (const [, voiceState] of guild.voiceStates.cache) {
         const member = voiceState.member;
         const channelId = voiceState.channelId;
@@ -169,18 +170,22 @@ client.once(Events.ClientReady, async (c) => {
         }
       }
 
-      // อัปเดตหน้าบอร์ด Leaderboard ใน Discord
-      if (!fs.existsSync(BOARD_CONFIG_PATH)) return;
-      const { channelId, messageId } = JSON.parse(fs.readFileSync(BOARD_CONFIG_PATH, 'utf8'));
+      // 2. อัปเดตหน้าบอร์ด Leaderboard ใน Discord ทุกรอบ 1 นาที (แยกออกมาเพื่อให้ทำงานชัวร์ 100%)
+      if (fs.existsSync(BOARD_CONFIG_PATH)) {
+        const { channelId, messageId } = JSON.parse(fs.readFileSync(BOARD_CONFIG_PATH, 'utf8'));
 
-      const channel = await c.channels.fetch(channelId).catch(() => null);
-      if (!channel) return;
-
-      const message = await channel.messages.fetch(messageId).catch(() => null);
-      if (!message) return;
-
-      const embed = await generateLeaderboardEmbed();
-      await message.edit({ embeds: [embed] });
+        const channel = await c.channels.fetch(channelId).catch(() => null);
+        if (channel) {
+          const message = await channel.messages.fetch(messageId).catch(() => null);
+          if (message) {
+            const embed = await generateLeaderboardEmbed();
+            await message.edit({ embeds: [embed] });
+            console.log('[ActivityRank] Leaderboard board updated successfully.');
+          } else {
+            console.warn('[ActivityRank] Leaderboard message not found. Please re-run /setup-leaderboard');
+          }
+        }
+      }
     } catch (err) {
       console.error('[ActivityRank Tick Error]:', err);
     }
