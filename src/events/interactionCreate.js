@@ -7,7 +7,7 @@ import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.
 import { supabase } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
-// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด (พร้อมตัวจัดการข้อผิดพลาด)
 async function getCombinedVoiceTimes() {
   try {
     const [oldRes, histRes, currRes] = await Promise.all([
@@ -98,9 +98,9 @@ export default {
 
     if (interaction.isButton() && (interaction.customId === 'btn_check_voicetime' || interaction.customId === 'btn_voice_leaderboard')) {
       try {
+        // ใช้ deferReply แบบ ephemeral เพื่อป้องกันบอทขึ้นค้างกำลังคิด
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-        // ✅ แก้ไขให้เรียกใช้ฟังก์ชันดึงข้อมูลรวม 3 ตาราง
         const dbTimes = await getCombinedVoiceTimes();
 
         if (interaction.customId === 'btn_check_voicetime') {
