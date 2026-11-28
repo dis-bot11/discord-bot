@@ -10,16 +10,11 @@ import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 // ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด (พร้อม Debug)
 async function getCombinedVoiceTimes() {
   try {
-    console.log('[DEBUG BUTTON] Fetching voice times from 3 tables...');
     const [oldRes, histRes, currRes] = await Promise.all([
       supabase.from('voice_times_old').select('user_id, minutes'),
       supabase.from('voice_times_historical').select('user_id, minutes'),
       supabase.from('voice_times').select('user_id, minutes')
     ]);
-
-    console.log('[DEBUG BUTTON] oldRes:', oldRes.data?.length || 0, 'rows');
-    console.log('[DEBUG BUTTON] histRes:', histRes.data?.length || 0, 'rows');
-    console.log('[DEBUG BUTTON] currRes:', currRes.data?.length || 0, 'rows');
 
     const totals = {};
     const addData = (rows) => {
@@ -34,23 +29,10 @@ async function getCombinedVoiceTimes() {
     addData(histRes.data);
     addData(currRes.data);
 
-    console.log('[DEBUG BUTTON] Combined totals success. Total users:', Object.keys(totals).length);
     return totals;
   } catch (error) {
     console.error('[DEBUG BUTTON ERROR] Error fetching combined voice times:', error);
     return {};
-  }
-}
-
-async function replyError(interaction, text) {
-  try {
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({ content: text, embeds: [], components: [] });
-    } else {
-      await interaction.reply({ content: text, flags: MessageFlags.Ephemeral });
-    }
-  } catch (err) {
-    console.error('[DEBUG BUTTON ERROR] replyError failed:', err);
   }
 }
 
@@ -97,16 +79,16 @@ export default {
         return;
       } catch (error) {
         console.error('[interaction:bot_guard] error:', error);
-        await replyError(interaction, '❌ ไม่สามารถอัปเดตสถานะ Bot Guard ได้ในขณะนี้');
         return;
       }
     }
 
     if (interaction.isButton() && (interaction.customId === 'btn_check_voicetime' || interaction.customId === 'btn_voice_leaderboard')) {
       console.log(`[DEBUG BUTTON] Button pressed: ${interaction.customId} by user ${interaction.user.tag} (${interaction.user.id})`);
+      
       try {
+        // ใช้ deferReply แบบระบุธง MessageFlags.Ephemeral ตรงๆ
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        console.log('[DEBUG BUTTON] deferReply successful');
 
         const dbTimes = await getCombinedVoiceTimes();
 
@@ -116,8 +98,6 @@ export default {
           const hours = Math.floor(totalMinutes / 60);
           const mins = totalMinutes % 60;
 
-          console.log(`[DEBUG BUTTON] Check time for ${userId}: ${totalMinutes} mins (${hours}h ${mins}m)`);
-
           const embed = new EmbedBuilder()
             .setColor(COLORS.info)
             .setAuthor({ name: interaction.user.tag, iconURL: interaction.user.displayAvatarURL() })
@@ -126,12 +106,8 @@ export default {
               { name: 'เวลาสะสมทั้งหมด', value: `**${hours} ชั่วโมง ${mins} นาที**`, inline: true }
             );
 
-          if (interaction.deferred || interaction.replied) {
-            await interaction.editReply({ embeds: [embed] });
-          } else {
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-          }
-          console.log('[DEBUG BUTTON] Reply for check_voicetime successful');
+          await interaction.editReply({ embeds: [embed] });
+          console.log('[DEBUG BUTTON] Successfully replied to check_voicetime');
           return;
         }
 
@@ -140,8 +116,6 @@ export default {
             .filter(([, m]) => m > 0)
             .sort(([, a], [, b]) => b - a)
             .slice(0, 10);
-
-          console.log('[DEBUG BUTTON] Leaderboard top 10 calculated, items:', sorted.length);
 
           const rankList = sorted.length
             ? sorted
@@ -157,17 +131,17 @@ export default {
             .setTitle('🏆 10 อันดับยอดออนห้องเสียงสูงสุด')
             .setDescription(rankList);
 
-          if (interaction.deferred || interaction.replied) {
-            await interaction.editReply({ embeds: [embed] });
-          } else {
-            await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-          }
-          console.log('[DEBUG BUTTON] Reply for voice_leaderboard successful');
+          await interaction.editReply({ embeds: [embed] });
+          console.log('[DEBUG BUTTON] Successfully replied to voice_leaderboard');
           return;
         }
       } catch (error) {
-        console.error('[DEBUG BUTTON ERROR] Catch block error:', error);
-        await replyError(interaction, '❌ เกิดข้อผิดพลาดในการตรวจสอบเวลาออนเสียง');
+        console.error('[DEBUG BUTTON ERROR] Failed to process button interaction:', error);
+        try {
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ content: '❌ เกิดข้อผิดพลาดในการตรวจสอบเวลาออนเสียง ลองใหม่อีกครั้ง', embeds: [], components: [] });
+          }
+        } catch {}
         return;
       }
     }
@@ -184,7 +158,6 @@ export default {
       }
     } catch (error) {
       console.error(`[interaction:${interaction.commandName ?? interaction.customId}] error:`, error);
-      await replyError(interaction, '❌ เกิดข้อผิดพลาดในการทำงานของบอท ลองใหม่อีกครั้ง');
     }
   },
 };
