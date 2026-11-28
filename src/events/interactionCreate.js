@@ -7,14 +7,19 @@ import { getBotGuardStatus, setBotGuardStatus } from '../systems/antiNukeSystem.
 import { supabase } from '../utils/supabase.js';
 import { handleBotCommanderInteraction } from '../commands/botCommander.js';
 
-// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลจากทั้ง 3 ตารางสำหรับปุ่มกด (พร้อมตัวจัดการข้อผิดพลาด)
+// ☁️ ฟังก์ชันดึงและรวมยอดข้อมูลพร้อมใส่ Debug
 async function getCombinedVoiceTimes() {
   try {
+    console.log('[DEBUG BUTTON] Fetching voice times from 3 tables...');
     const [oldRes, histRes, currRes] = await Promise.all([
       supabase.from('voice_times_old').select('user_id, minutes'),
       supabase.from('voice_times_historical').select('user_id, minutes'),
       supabase.from('voice_times').select('user_id, minutes')
     ]);
+
+    console.log('[DEBUG BUTTON] oldRes:', oldRes.data?.length || 0, 'rows');
+    console.log('[DEBUG BUTTON] histRes:', histRes.data?.length || 0, 'rows');
+    console.log('[DEBUG BUTTON] currRes:', currRes.data?.length || 0, 'rows');
 
     const totals = {};
     const addData = (rows) => {
@@ -29,9 +34,10 @@ async function getCombinedVoiceTimes() {
     addData(histRes.data);
     addData(currRes.data);
 
+    console.log('[DEBUG BUTTON] Combined totals success. Total users:', Object.keys(totals).length);
     return totals;
   } catch (error) {
-    console.error('Error fetching combined voice times for buttons:', error);
+    console.error('[DEBUG BUTTON ERROR] Error fetching combined voice times:', error);
     return {};
   }
 }
@@ -43,8 +49,8 @@ async function replyError(interaction, text) {
     } else {
       await interaction.reply({ content: text, flags: MessageFlags.Ephemeral });
     }
-  } catch {
-    // ตอบไม่ได้ก็ปล่อย
+  } catch (err) {
+    console.error('[DEBUG BUTTON ERROR] replyError failed:', err);
   }
 }
 
@@ -97,9 +103,10 @@ export default {
     }
 
     if (interaction.isButton() && (interaction.customId === 'btn_check_voicetime' || interaction.customId === 'btn_voice_leaderboard')) {
+      console.log(`[DEBUG BUTTON] Button pressed: ${interaction.customId} by user ${interaction.user.tag} (${interaction.user.id})`);
       try {
-        // ใช้ deferReply แบบ ephemeral เพื่อป้องกันบอทขึ้นค้างกำลังคิด
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        console.log('[DEBUG BUTTON] deferReply successful');
 
         const dbTimes = await getCombinedVoiceTimes();
 
@@ -108,6 +115,8 @@ export default {
           const totalMinutes = dbTimes[userId] || 0;
           const hours = Math.floor(totalMinutes / 60);
           const mins = totalMinutes % 60;
+
+          console.log(`[DEBUG BUTTON] Check time for ${userId}: ${totalMinutes} mins (${hours}h ${mins}m)`);
 
           const embed = new EmbedBuilder()
             .setColor(COLORS.info)
@@ -118,6 +127,7 @@ export default {
             );
 
           await interaction.editReply({ embeds: [embed] });
+          console.log('[DEBUG BUTTON] editReply for check_voicetime successful');
           return;
         }
 
@@ -126,6 +136,8 @@ export default {
             .filter(([, m]) => m > 0)
             .sort(([, a], [, b]) => b - a)
             .slice(0, 10);
+
+          console.log('[DEBUG BUTTON] Leaderboard top 10 calculated, items:', sorted.length);
 
           const rankList = sorted.length
             ? sorted
@@ -142,10 +154,11 @@ export default {
             .setDescription(rankList);
 
           await interaction.editReply({ embeds: [embed] });
+          console.log('[DEBUG BUTTON] editReply for voice_leaderboard successful');
           return;
         }
       } catch (error) {
-        console.error('[interaction:voicetime_button] error:', error);
+        console.error('[DEBUG BUTTON ERROR] Catch block error:', error);
         await replyError(interaction, '❌ เกิดข้อผิดพลาดในการตรวจสอบเวลาออนเสียง');
         return;
       }
